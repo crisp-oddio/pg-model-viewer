@@ -1,0 +1,86 @@
+@theme {
+  /* Make Tailwind's `font-mono` utility (used app-wide as the UI font) follow
+     the user-selected font. Defaults to monospace, so the default look is
+     unchanged. Set at runtime via --app-font-family (see settingsStore). */
+  --font-mono: var(--app-font-family, monospace);
+
+  /* Dark UI palette */
+  --color-surface-base: #1a1a1a;
+  --color-surface-dark: #111111;
+  --color-surface-card: #1a1a2e;
+  --color-surface-elevated: #2a2a2a;
+
+  --color-border-default: #333333;
+  --color-border-light: #444444;
+  --color-border-hover: #555555;
+
+  --color-text-primary: #d4d4d4;
+  --color-text-secondary: #a0a0a0;
+  --color-text-muted: #808080;
+  --color-text-dim: #6a6a6a;
+  --color-text-system: #a8a8a8;
+
+  --color-accent-gold: #e0c060;
+  --color-accent-blue: #4a90e2;
+  --color-accent-green: #5cb85c;
+  --color-accent-red: #d9534f;
+  --color-accent-warning: #f0ad4e;
+
+  /* Player vital bars (matches in-game HUD order: health, armor, power, metabolism) */
+  --color-vital-health: #d94040;
+  --color-vital-armor: #d4a830;
+  --color-vital-power: #3a7ad5;
+  --color-vital-metabolism: #4aad4a;
+
+  /* Channel colors */
+  --color-channel-global: #ffd700;
+  --color-channel-trade: #66cc66;
+  --color-channel-help: #66aaff;
+  --color-channel-guild: #cc66ff;
+  --color-channel-nearby: #ff9944;
+  --color-channel-status: #66dddd;
+  --color-channel-combat: #ff4444;
+  --color-channel-lfg: #ff66cc;
+  --color-channel-party: #88ff66;
+
+  --color-sender: #66aaff;
+
+  /* Entity type colors */
+  --color-entity-item: #7ec8e3;
+  --color-entity-quest: #e0c060;
+  --color-entity-skill: #5cb85c;
+  --color-entity-npc: #e0965c;
+  --color-entity-ability: #b07ce0;
+  --color-entity-area: #6a9fb5;
+  --color-entity-enemy: #d9534f;
+  --color-entity-recipe: #c8a05c;
+
+  /* Value semantics (gain/loss/neutral) */
+  --color-value-positive: #4ade80;
+  --color-value-negative: #f87171;
+  --color-value-neutral-warm: #c8b47e;
+  --color-value-gold: #d4af37;
+
+  /* Surface variants */
+  --color-surface-inset: #151515;
+  --color-surface-row-hover: #1e1e1e;
+  --color-border-subtle: #2a2a3e;
+
+  /* Status indicators */
+  --color-status-active: #22c55e;
+  --color-status-inactive: #ef4444;
+  --color-status-warning: #eab308;
+
+  /* Rarity colors */
+  --color-rarity-uncommon: #4ade80;
+  --color-rarity-rare: #60a5fa;
+  --color-rarity-exceptional: #c084fc;
+  --color-rarity-epic: #fb923c;
+  --color-rarity-legendary: #facc15;
+
+  /* Domain-specific */
+  --color-desire-love: #ff69b4;
+  --color-desire-like: #7ec8e3;
+  --color-desire-hate: #aa4444;
+  --color-mod-augment: #c084fc;
+}

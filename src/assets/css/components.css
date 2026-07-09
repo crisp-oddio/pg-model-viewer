@@ -1,0 +1,107 @@
+@layer components {
+  /* Heading hierarchy */
+  .screen-title {
+    @apply text-xl font-medium text-text-primary;
+  }
+
+  .section-heading {
+    @apply text-sm font-semibold text-text-secondary uppercase tracking-wider;
+  }
+
+  .panel-label {
+    @apply text-xs font-semibold text-text-muted uppercase tracking-wider;
+  }
+
+  .micro-label {
+    @apply text-[10px] font-semibold text-text-muted uppercase tracking-wider;
+  }
+
+  .btn {
+    @apply px-3 py-1.5 rounded text-sm font-medium transition-colors cursor-pointer font-mono;
+  }
+
+  .btn-primary {
+    @apply bg-accent-gold text-surface-dark hover:bg-accent-gold/80;
+  }
+
+  .btn-secondary {
+    @apply bg-surface-card text-text-secondary border border-border-default hover:bg-surface-elevated hover:border-border-hover hover:text-text-primary;
+  }
+
+  .btn:disabled {
+    @apply opacity-40 cursor-default;
+  }
+
+  .btn-warning {
+    @apply bg-status-warning/10 border-status-warning/30 hover:bg-status-warning/15 hover:border-status-warning/40;
+  }
+
+  .btn-danger {
+    @apply bg-status-inactive/10 border-status-inactive/30 hover:bg-status-inactive/15 hover:border-status-inactive/40;
+  }
+
+  .card {
+    @apply bg-surface-card border border-border-default rounded-lg;
+  }
+
+  .input {
+    @apply bg-surface-card border border-border-default rounded px-3 py-1.5 text-text-primary text-sm focus:outline-none focus:border-accent-gold;
+    font-family: inherit;
+  }
+
+  /* Hide the native number-input spin buttons (e.g. when custom +/- steppers are
+     provided instead, so the arrows don't overlap a narrow centered field). */
+  .no-spinner::-webkit-inner-spin-button,
+  .no-spinner::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  .no-spinner {
+    -moz-appearance: textfield;
+    appearance: textfield;
+  }
+
+  .tab {
+    @apply px-6 py-3 text-text-secondary cursor-pointer border-b-2 border-transparent;
+  }
+
+  .tab-active {
+    @apply text-accent-gold border-accent-gold;
+  }
+
+  .settings-section {
+    @apply bg-surface-base border border-border-default rounded p-6 mb-4;
+  }
+
+  .settings-section h3 {
+    @apply text-text-primary mt-0 mb-4 text-lg;
+  }
+
+  .error-box {
+    @apply mt-4 p-3 bg-status-inactive/10 border border-status-inactive/30 rounded text-accent-red text-sm;
+  }
+
+  .success-box {
+    @apply mt-4 p-3 bg-status-active/10 border border-status-active/30 rounded text-accent-green text-sm;
+  }
+
+  .info-box {
+    @apply mt-4 p-3 bg-accent-blue/10 border border-accent-blue/20 rounded text-accent-blue text-sm;
+  }
+
+  .status-panel {
+    @apply bg-surface-dark border border-border-default rounded p-3 mb-4 font-mono text-xs;
+  }
+
+  .status-row {
+    @apply flex justify-between py-1;
+  }
+
+  .status-label {
+    @apply text-text-secondary;
+  }
+
+  .status-value {
+    @apply text-text-primary font-bold;
+  }
+}
