@@ -135,7 +135,7 @@
             <button
               v-for="s in VIEWER_SLOTS"
               :key="s.id"
-              class="relative w-[60px] h-[60px] rounded border flex items-center justify-center cursor-pointer transition-colors"
+              class="relative w-[60px] h-[60px] p-0.5 rounded border flex items-center justify-center cursor-pointer transition-colors"
               :class="store.activeSlot === s.id
                 ? 'border-accent-gold bg-accent-gold/10'
                 : 'border-border-default hover:bg-white/5'"
@@ -144,7 +144,7 @@
               <GameIcon
                 v-if="store.loadout[s.id]"
                 :icon-id="store.loadout[s.id].icon_id ?? undefined"
-                size="lg" />
+                size="fill" />
               <span v-else class="text-[9px] text-text-dim leading-tight text-center px-0.5">
                 {{ s.label }}
               </span>
