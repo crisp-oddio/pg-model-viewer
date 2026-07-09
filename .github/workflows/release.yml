@@ -62,7 +62,13 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add package.json package-lock.json src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock
-          git commit -m "release: $TAG"
+          # No diff = re-releasing the current version (e.g. after a CI fix
+          # where the previous attempt's tag was deleted) — just re-tag.
+          if git diff --cached --quiet; then
+            echo "Version files already at $VERSION — re-tagging"
+          else
+            git commit -m "release: $TAG"
+          fi
           git tag "$TAG"
           git push origin main "$TAG"
 
