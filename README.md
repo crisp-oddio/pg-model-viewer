@@ -39,7 +39,7 @@ three.js viewer      ──▶  mesh geometry + dye ShaderMaterial (live recolor
 - Node 18+, Rust (stable), and the Tauri 2 prerequisites for your OS.
 - **Python 3** with `UnityPy`, `pygltflib`, `numpy`, `Pillow`
   (`pip install -r tools/model_extractor/requirements.txt`) for the one-time
-  model extraction.
+  model extraction — **dev only**; release builds ship a frozen extractor.
 - A local Project: Gorgon install (auto-detected via Steam).
 
 ## Develop
@@ -57,6 +57,19 @@ Backend checks / tests:
 cd src-tauri
 cargo test --lib        # includes the appearance parser + base-body unit tests
 ```
+
+## Install (users)
+
+Grab the installer for your platform from the
+[latest release](https://github.com/crisp-oddio/pg-model-viewer/releases/latest):
+Windows `-setup.exe`, macOS `.dmg` (Apple Silicon), Linux `.deb` / `.AppImage`.
+Release builds bundle the model extractor — no Python needed.
+
+## Release (maintainers)
+
+Actions → **Release** → Run workflow → choose `patch`/`minor`/`major` or an
+explicit `x.y.z`. The workflow bumps the version, tags, freezes the extractor
+sidecar per platform, builds all installers, and publishes the GitHub Release.
 
 ## First run
 

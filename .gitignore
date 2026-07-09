@@ -8,6 +8,12 @@ src-tauri/target/
 # tauri generated
 src-tauri/gen/
 
+# extractor sidecar (built by CI / build_sidecar.sh)
+src-tauri/binaries/
+.pyi-out/
+.pyi-build/
+.pyi-tmp/
+
 # misc
 *.log
 .DS_Store

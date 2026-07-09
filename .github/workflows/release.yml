@@ -1,0 +1,196 @@
+name: Release
+
+# One-button release: bump the version, tag, build installers for
+# Windows / macOS / Linux (each with the frozen model-extractor sidecar),
+# and publish a GitHub Release with all artifacts attached.
+#
+# Trigger via Actions → Release → Run workflow, choosing a bump
+# (patch/minor/major) or an explicit x.y.z version.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version bump (patch/minor/major) or explicit x.y.z"
+        required: true
+        default: "patch"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  # ── Step 1: bump version files, commit to main, push the tag ──
+  bump:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.bump.outputs.version }}
+      tag: ${{ steps.bump.outputs.tag }}
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Compute and apply version bump
+        id: bump
+        shell: bash
+        run: |
+          set -euo pipefail
+          INPUT="${{ github.event.inputs.version }}"
+          CURRENT=$(python3 -c "import json;print(json.load(open('src-tauri/tauri.conf.json'))['version'])")
+          IFS=. read -r MA MI PA <<< "$CURRENT"
+          case "$INPUT" in
+            patch) VERSION="$MA.$MI.$((PA+1))" ;;
+            minor) VERSION="$MA.$((MI+1)).0" ;;
+            major) VERSION="$((MA+1)).0.0" ;;
+            *)
+              if [[ "$INPUT" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then VERSION="$INPUT"
+              else echo "Invalid version input: $INPUT"; exit 1; fi ;;
+          esac
+          TAG="v$VERSION"
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists"; exit 1
+          fi
+          echo "Bumping $CURRENT → $VERSION"
+          python3 tools/bump_version.py "$VERSION"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add package.json package-lock.json src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock
+          git commit -m "release: $TAG"
+          git tag "$TAG"
+          git push origin main "$TAG"
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+  # ── Step 2: build installers on all platforms (with the extractor sidecar) ──
+  build:
+    needs: bump
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            label: windows
+            triple: x86_64-pc-windows-msvc
+            args: ""
+          - platform: macos-latest
+            label: macos
+            triple: aarch64-apple-darwin
+            args: "--target aarch64-apple-darwin"
+          - platform: ubuntu-latest
+            label: linux
+            triple: x86_64-unknown-linux-gnu
+            args: ""
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - name: Checkout (at release tag)
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.bump.outputs.tag }}
+
+      - name: Install Linux dependencies
+        if: matrix.platform == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin' || '' }}
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Setup Python (for the extractor sidecar)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Freeze model-extractor sidecar
+        shell: bash
+        run: tools/model_extractor/build_sidecar.sh "${{ matrix.triple }}"
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      # Build only — no tagName/releaseName so tauri-action doesn't create a
+      # release. externalBin is declared here (release-only) so `tauri dev`
+      # doesn't require the sidecar locally.
+      - name: Build with tauri-action
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tauriScript: npx tauri
+          args: ${{ matrix.args }} --config '{"bundle":{"externalBin":["binaries/model-extractor"]},"app":{"windows":[{"title":"PG Model Viewer v${{ needs.bump.outputs.version }}"}]}}'
+
+      - name: Collect artifacts
+        shell: bash
+        env:
+          VERSION: ${{ needs.bump.outputs.version }}
+        run: |
+          mkdir -p release-artifacts
+          BUNDLE_DIR=$(find src-tauri/target -path "*/release/bundle" -type d | head -1)
+          if [ -z "$BUNDLE_DIR" ]; then
+            echo "ERROR: no bundle directory"; find src-tauri/target -name bundle -type d; exit 1
+          fi
+          echo "Bundle dir: $BUNDLE_DIR"; find "$BUNDLE_DIR" -type f | head -30 || true
+
+          for f in "$BUNDLE_DIR"/nsis/*.exe; do
+            [ -f "$f" ] && cp "$f" "release-artifacts/pg-model-viewer-${VERSION}-windows-setup.exe"
+          done
+          for f in "$BUNDLE_DIR"/dmg/*.dmg; do
+            [ -f "$f" ] && cp "$f" "release-artifacts/pg-model-viewer-${VERSION}-macos.dmg"
+          done
+          for f in "$BUNDLE_DIR"/deb/*.deb; do
+            [ -f "$f" ] && cp "$f" "release-artifacts/pg-model-viewer-${VERSION}-linux.deb"
+          done
+          for f in "$BUNDLE_DIR"/appimage/*.AppImage; do
+            [ -f "$f" ] && cp "$f" "release-artifacts/pg-model-viewer-${VERSION}-linux.AppImage"
+          done
+          ls -la release-artifacts/
+
+      - name: Upload platform artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: artifacts-${{ matrix.label }}
+          path: release-artifacts/*
+
+  # ── Step 3: publish the GitHub Release with everything attached ──
+  publish:
+    needs: [bump, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all platform artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: artifacts-*
+          path: all-artifacts
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.bump.outputs.tag }}
+        run: |
+          ls -la all-artifacts/
+          gh release create "$TAG" all-artifacts/* \
+            --repo "${{ github.repository }}" \
+            --title "PG Model Viewer $TAG" \
+            --generate-notes
