@@ -9,7 +9,13 @@ import type {
   BrowsableItem,
   ExtractionProgress,
   LoadoutEntry,
+  DyeMap,
+  DyeInfo,
+  LoadoutPreset,
 } from "../types/modelViewer";
+
+const LS_PRESETS = "pgmv:loadouts";
+const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
 
 export const useModelViewerStore = defineStore("modelViewer", () => {
   const status = ref<ModelViewerStatus | null>(null);
@@ -37,6 +43,17 @@ export const useModelViewerStore = defineStore("modelViewer", () => {
   const baseBody = ref<ResolvedSlot[]>([]);
   const resolvedLoadout = ref<Record<string, ResolvedItemAppearance>>({});
 
+  // Live dye state, keyed by directive-slot name (e.g. "Chest") → channel → hex.
+  // Kept in the store (not just the swatch UI) so dye survives scene rebuilds
+  // and can be saved into a loadout preset.
+  const dyeBySlot = ref<DyeMap>({});
+
+  // Saved loadouts (items + dye + sex), persisted to localStorage.
+  const presets = ref<LoadoutPreset[]>(loadPresets());
+
+  // All in-game dyes (name + hex from the item data), for the dye dropdowns.
+  const dyes = ref<DyeInfo[]>([]);
+
   // Extraction
   const extracting = ref(false);
   const extractionMessage = ref<string>("");
@@ -59,6 +76,7 @@ export const useModelViewerStore = defineStore("modelViewer", () => {
       // else, so the item picker and icons have data. Cached after first run.
       try {
         await invoke<number>("ensure_game_data");
+        dyes.value = await invoke<DyeInfo[]>("list_dyes");
       } catch (e) {
         error.value = `Couldn't load Project: Gorgon item data: ${e}`;
       }
@@ -170,14 +188,106 @@ export const useModelViewerStore = defineStore("modelViewer", () => {
     await resolveCurrent();
     // Cache the resolved appearance so Character mode can assemble the whole
     // loadout without re-resolving each slot on every rebuild.
-    if (resolved.value) resolvedLoadout.value[slot] = resolved.value;
-    else delete resolvedLoadout.value[slot];
+    if (resolved.value) {
+      resolvedLoadout.value[slot] = resolved.value;
+      // A newly chosen item starts from its own material defaults, not any dye
+      // left over from the slot's previous item.
+      for (const s of resolved.value.slots) delete dyeBySlot.value[s.slot];
+    } else {
+      delete resolvedLoadout.value[slot];
+    }
   }
 
   function clearSlot(slot: string) {
+    const appr = resolvedLoadout.value[slot];
+    if (appr) for (const s of appr.slots) delete dyeBySlot.value[s.slot];
     delete loadout.value[slot];
     delete resolvedLoadout.value[slot];
     if (activeSlot.value === slot) {
+      selectedRef.value = null;
+      resolved.value = null;
+    }
+  }
+
+  // ── Dye ────────────────────────────────────────────────────────────────────
+
+  /** Record a dye color for a slot's channel (persisted in-memory, saved with a preset). */
+  function setDye(slot: string, channel: number, hex: string) {
+    dyeBySlot.value[slot] = { ...(dyeBySlot.value[slot] ?? {}), [channel]: hex };
+  }
+
+  /** Stored hex for a slot channel, if the user has set one. */
+  function getDye(slot: string, channel: number): string | undefined {
+    return dyeBySlot.value[slot]?.[channel];
+  }
+
+  /** All stored channel→hex for a slot (for seeding the material on rebuild). */
+  function getSlotDye(slot: string): Record<number, string> | undefined {
+    return dyeBySlot.value[slot];
+  }
+
+  // ── Loadout presets (localStorage) ───────────────────────────────────────────
+
+  function loadPresets(): LoadoutPreset[] {
+    try {
+      const raw = localStorage.getItem(LS_PRESETS);
+      if (raw) return JSON.parse(raw) as LoadoutPreset[];
+    } catch {
+      // Corrupt/absent — start empty.
+    }
+    return [];
+  }
+
+  function persistPresets() {
+    try {
+      localStorage.setItem(LS_PRESETS, JSON.stringify(presets.value));
+    } catch {
+      // Storage unavailable — presets just won't persist.
+    }
+  }
+
+  /** Snapshot the current sex + loadout + dye as a named, reloadable preset. */
+  function saveLoadout(name: string): string {
+    const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    presets.value = [
+      ...presets.value,
+      {
+        id,
+        name: name.trim() || `Loadout ${presets.value.length + 1}`,
+        sex: sex.value,
+        loadout: clone(loadout.value),
+        dye: clone(dyeBySlot.value),
+      },
+    ];
+    persistPresets();
+    return id;
+  }
+
+  function deleteLoadout(id: string) {
+    presets.value = presets.value.filter((p) => p.id !== id);
+    persistPresets();
+  }
+
+  /** Restore a saved preset: items + dye + sex, re-resolve, show the paper doll. */
+  async function loadLoadout(id: string) {
+    const p = presets.value.find((x) => x.id === id);
+    if (!p) return;
+    sex.value = p.sex;
+    loadout.value = clone(p.loadout);
+    dyeBySlot.value = clone(p.dye);
+    await fetchBaseBody();
+    const resolvedNext: Record<string, ResolvedItemAppearance> = {};
+    for (const [slot, entry] of Object.entries(loadout.value)) {
+      const r = await resolveRef(entry.ref);
+      if (r) resolvedNext[slot] = r;
+    }
+    resolvedLoadout.value = resolvedNext;
+    viewMode.value = "character";
+    const cur = loadout.value[activeSlot.value];
+    if (cur) {
+      selectedRef.value = cur.ref;
+      await resolveCurrent();
+    } else {
       selectedRef.value = null;
       resolved.value = null;
     }
@@ -230,6 +340,9 @@ export const useModelViewerStore = defineStore("modelViewer", () => {
     viewMode,
     baseBody,
     resolvedLoadout,
+    dyeBySlot,
+    presets,
+    dyes,
     extracting,
     extractionMessage,
     cacheReady,
@@ -247,6 +360,12 @@ export const useModelViewerStore = defineStore("modelViewer", () => {
     setViewMode,
     setSex,
     resolveCurrent,
+    setDye,
+    getDye,
+    getSlotDye,
+    saveLoadout,
+    deleteLoadout,
+    loadLoadout,
   };
 });
 

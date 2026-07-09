@@ -55,6 +55,27 @@ export interface LoadoutEntry {
   icon_id: number | null;
 }
 
+/** Per-slot dye: directive-slot name → channel (1–3) → "#rrggbb". */
+export type DyeMap = Record<string, Record<number, string>>;
+
+/** One usable in-game dye (item with the `Dye` keyword + `DyeColor`). */
+export interface DyeInfo {
+  name: string;
+  internal_name: string | null;
+  /** Bare hex from the game data, e.g. "00BFFF". */
+  color: string;
+  icon_id: number | null;
+}
+
+/** A saved, reloadable loadout (items + dye + sex). Persisted to localStorage. */
+export interface LoadoutPreset {
+  id: string;
+  name: string;
+  sex: "m" | "f";
+  loadout: Record<string, LoadoutEntry>;
+  dye: DyeMap;
+}
+
 /** Equipment slots the Model Viewer shows (those with a 3D model). */
 export const VIEWER_SLOTS: { id: string; label: string }[] = [
   { id: "Head", label: "Head" },

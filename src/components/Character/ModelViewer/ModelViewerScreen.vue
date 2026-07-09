@@ -167,10 +167,10 @@
         </div>
       </div>
 
-      <!-- Right: customize + drop sources -->
+      <!-- Right: customize + saved loadouts -->
       <template #right>
         <div class="flex flex-col h-full min-h-0">
-          <!-- Top half: customization -->
+          <!-- Top: per-item customization (dye) -->
           <div class="flex-1 min-h-0 overflow-y-auto p-2 flex flex-col gap-4">
             <div v-if="store.resolved">
               <div class="text-sm font-medium text-text-primary">{{ store.resolved.item_name }}</div>
@@ -180,6 +180,52 @@
             </div>
             <div v-else class="text-xs text-text-dim italic">Select an item for this slot.</div>
             <DyeControls @dye="onDye" />
+          </div>
+
+          <!-- Bottom: saved loadouts -->
+          <div
+            class="shrink-0 max-h-[45%] overflow-y-auto p-2 border-t border-border-default flex flex-col gap-2">
+            <span class="text-xs font-semibold text-text-secondary uppercase tracking-wide">
+              Loadouts
+            </span>
+            <div class="flex gap-1">
+              <input
+                v-model="presetName"
+                type="text"
+                placeholder="Name this loadout…"
+                class="input text-xs flex-1 min-w-0"
+                @keyup.enter="saveCurrent" />
+              <button
+                class="btn-secondary text-xs px-2 whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed"
+                :disabled="!canSave"
+                :title="canSave ? 'Save current loadout' : 'Equip at least one item first'"
+                @click="saveCurrent">
+                Save
+              </button>
+            </div>
+            <div v-if="store.presets.length === 0" class="text-[11px] text-text-dim italic">
+              No saved loadouts yet.
+            </div>
+            <div
+              v-for="p in store.presets"
+              :key="p.id"
+              class="flex items-center gap-1 text-xs group">
+              <button
+                class="flex-1 min-w-0 text-left truncate px-1.5 py-1 rounded hover:bg-white/5 hover:text-accent-gold cursor-pointer"
+                :title="`Load “${p.name}”`"
+                @click="store.loadLoadout(p.id)">
+                {{ p.name }}
+                <span class="text-[10px] text-text-dim">
+                  ({{ p.sex === "f" ? "F" : "M" }} · {{ Object.keys(p.loadout).length }})
+                </span>
+              </button>
+              <button
+                class="shrink-0 w-5 h-5 rounded text-text-dim hover:text-accent-red hover:bg-white/5 cursor-pointer leading-none"
+                title="Delete loadout"
+                @click="store.deleteLoadout(p.id)">
+                ×
+              </button>
+            </div>
           </div>
         </div>
       </template>
@@ -246,7 +292,20 @@ function onListScroll() {
 }
 
 function onDye(slot: string, channel: number, hex: string) {
+  // Persist the dye in the store (survives rebuilds / saves into presets) and
+  // update the live material uniform without a scene rebuild.
+  store.setDye(slot, channel, hex);
   turntable.value?.setDye(slot, channel, hex);
+}
+
+// ── Saved loadouts ────────────────────────────────────────────────────────────
+const presetName = ref("");
+const canSave = computed(() => Object.keys(store.loadout).length > 0);
+
+function saveCurrent() {
+  if (!canSave.value) return;
+  store.saveLoadout(presetName.value);
+  presetName.value = "";
 }
 
 onMounted(async () => {

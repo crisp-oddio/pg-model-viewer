@@ -10,18 +10,26 @@
           {{ channelLabel(slot.dye_channels) }} dye
         </span>
       </div>
-      <div class="flex gap-2">
-        <label
-          v-for="ch in slot.dye_channels"
-          :key="ch"
-          class="flex flex-col items-center gap-1">
-          <input
-            type="color"
-            class="w-9 h-9 rounded cursor-pointer border border-white/15 bg-transparent p-0"
-            :value="hexFor(slot.slot, ch)"
-            @input="onInput(slot.slot, ch, $event)" />
-          <span class="text-[10px] text-text-muted">{{ ch }}</span>
-        </label>
+
+      <!-- One dropdown per dye channel, listing every in-game dye -->
+      <div
+        v-for="ch in slot.dye_channels"
+        :key="ch"
+        class="flex items-center gap-2">
+        <span class="text-[10px] text-text-muted w-3 text-center shrink-0">{{ ch }}</span>
+        <span
+          class="w-6 h-6 rounded border border-white/15 shrink-0"
+          :style="{ backgroundColor: displayHex(slot, ch) }"
+          :title="displayHex(slot, ch)" />
+        <select
+          class="input text-xs flex-1 min-w-0"
+          :value="selectedValue(slot, ch)"
+          @change="onSelect(slot, ch, $event)">
+          <option value="">Default ({{ defaultHex(slot, ch) }})</option>
+          <option v-for="d in store.dyes" :key="d.name" :value="normalize(d.color)">
+            {{ d.name }}
+          </option>
+        </select>
       </div>
     </div>
 
@@ -32,7 +40,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, watch } from "vue";
+import { computed } from "vue";
 import { useModelViewerStore } from "../../../stores/modelViewerStore";
 import type { ResolvedSlot } from "../../../types/modelViewer";
 
@@ -41,9 +49,6 @@ const store = useModelViewerStore();
 const emit = defineEmits<{
   (e: "dye", slot: string, channel: number, hex: string): void;
 }>();
-
-// Current hex per "slot:channel" (seeded from material defaults, then user edits).
-const current = reactive<Record<string, string>>({});
 
 const dyeableSlots = computed<ResolvedSlot[]>(() =>
   (store.resolved?.slots ?? []).filter((s) => s.dyeable && s.dye_channels > 0),
@@ -57,6 +62,11 @@ function channelLabel(n: number): string {
   return n === 1 ? "Single" : n === 2 ? "Double" : n === 3 ? "Triple" : `${n}`;
 }
 
+/** Game DyeColor values are bare uppercase hex ("00BFFF") → "#00bfff". */
+function normalize(hex: string): string {
+  return `#${hex.replace(/^#/, "").toLowerCase()}`;
+}
+
 function defaultHex(slot: ResolvedSlot, channel: number): string {
   const c = slot.default_colors?.[`_Color${channel}`];
   if (!c) return "#808080";
@@ -67,27 +77,22 @@ function defaultHex(slot: ResolvedSlot, channel: number): string {
   return `#${to(c[0])}${to(c[1])}${to(c[2])}`;
 }
 
-function hexFor(slot: string, channel: number): string {
-  const key = `${slot}:${channel}`;
-  return current[key] ?? "#808080";
+/** The swatch chip: the user's stored dye for this slot/channel, else default. */
+function displayHex(slot: ResolvedSlot, channel: number): string {
+  return store.getDye(slot.slot, channel) ?? defaultHex(slot, channel);
 }
 
-function onInput(slot: string, channel: number, ev: Event) {
-  const hex = (ev.target as HTMLInputElement).value;
-  current[`${slot}:${channel}`] = hex;
-  emit("dye", slot, channel, hex);
+/** Dropdown selection: stored dye hex if it matches a game dye, else Default. */
+function selectedValue(slot: ResolvedSlot, channel: number): string {
+  const stored = store.getDye(slot.slot, channel);
+  if (!stored) return "";
+  const hex = normalize(stored);
+  return store.dyes.some((d) => normalize(d.color) === hex) ? hex : "";
 }
 
-// Re-seed defaults whenever a new item resolves.
-watch(
-  dyeableSlots,
-  (slots) => {
-    for (const s of slots) {
-      for (let ch = 1; ch <= s.dye_channels; ch++) {
-        current[`${s.slot}:${ch}`] = defaultHex(s, ch);
-      }
-    }
-  },
-  { immediate: true },
-);
+function onSelect(slot: ResolvedSlot, channel: number, ev: Event) {
+  const value = (ev.target as HTMLSelectElement).value;
+  // "" = revert to the material's own default color for this channel.
+  emit("dye", slot.slot, channel, value || defaultHex(slot, channel));
+}
 </script>

@@ -155,18 +155,30 @@ function loadTexture(rel: string | undefined | null): THREE.Texture | null {
   return t;
 }
 
+function hexToRgb(hex: string): [number, number, number] | undefined {
+  const m = /^#?([0-9a-fA-F]{6})$/.exec(hex.trim());
+  if (!m) return undefined;
+  const n = parseInt(m[1], 16);
+  return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
+}
+
 function dyeInitFor(slot: ResolvedSlot): DyeInit {
   const c = slot.default_colors ?? {};
   const rgb = (k: string): [number, number, number] | undefined => {
     const v = c[k];
     return v ? [v[0], v[1], v[2]] : undefined;
   };
+  // Prefer any user-set dye stored in the store (persists across rebuilds),
+  // falling back to the material's default color for the channel.
+  const stored = store.getSlotDye(slot.slot);
+  const ch = (n: number): [number, number, number] | undefined =>
+    (stored?.[n] && hexToRgb(stored[n])) || rgb(`_Color${n}`);
   return {
     channels: slot.dyeable ? slot.dye_channels : 0,
     color0: rgb("_Color0"),
-    color1: rgb("_Color1"),
-    color2: rgb("_Color2"),
-    color3: rgb("_Color3"),
+    color1: ch(1),
+    color2: ch(2),
+    color3: ch(3),
   };
 }
 

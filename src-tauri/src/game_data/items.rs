@@ -25,6 +25,9 @@ pub struct ItemInfo {
     // `game_data::appearance::parse_equip_appearance`.
     pub equip_appearance: Option<String>,
     pub equip_appearance2: Option<String>,
+
+    // Dye items only: the color this dye applies, as bare hex (e.g. "00BFFF").
+    pub dye_color: Option<String>,
 }
 
 /// Parse the CDN `items.json` object (keys like `Item_1234`) into a map by id.
@@ -50,6 +53,7 @@ pub fn parse(json: &str) -> Result<HashMap<u32, ItemInfo>, String> {
                 equip_slot: str_field(&value, "EquipSlot"),
                 equip_appearance: str_field(&value, "EquipAppearance"),
                 equip_appearance2: str_field(&value, "EquipAppearance2"),
+                dye_color: str_field(&value, "DyeColor"),
             },
         );
     }

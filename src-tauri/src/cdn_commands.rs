@@ -90,6 +90,37 @@ pub async fn ensure_game_data(
     Ok(n)
 }
 
+/// One usable in-game dye (an item with the `Dye` keyword + a `DyeColor`).
+#[derive(serde::Serialize)]
+pub struct DyeInfo {
+    pub name: String,
+    pub internal_name: Option<String>,
+    /// Bare hex from the game data, e.g. "00BFFF".
+    pub color: String,
+    pub icon_id: Option<u32>,
+}
+
+/// All game dyes, sorted by display name — drives the dye dropdowns.
+#[tauri::command]
+pub async fn list_dyes(state: State<'_, GameDataState>) -> Result<Vec<DyeInfo>, String> {
+    let g = state.read().await;
+    let mut out: Vec<DyeInfo> = g
+        .items
+        .values()
+        .filter(|i| i.keywords.iter().any(|k| k == "Dye"))
+        .filter_map(|i| {
+            i.dye_color.as_ref().map(|c| DyeInfo {
+                name: i.name.clone(),
+                internal_name: i.internal_name.clone(),
+                color: c.clone(),
+                icon_id: i.icon_id,
+            })
+        })
+        .collect();
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(out)
+}
+
 /// Fetch (and cache) an item icon, returning its local file path for
 /// `convertFileSrc`. Requires the catalog to be loaded (for the CDN version).
 #[tauri::command]
