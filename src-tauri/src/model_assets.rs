@@ -20,7 +20,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 const PG_STEAM_APPID: &str = "342940";
 /// Catalog schema this app expects (must match extract.py's CATALOG_SCHEMA).
 /// An older cache reports `cache_ready=false` so the UI prompts a re-extract.
-const EXPECTED_CATALOG_SCHEMA: u64 = 3;
+const EXPECTED_CATALOG_SCHEMA: u64 = 4;
 /// Relative path from a game install root to the addressable bundle dir.
 const BUNDLE_SUBPATH: &str =
     "WindowsPlayer_Data/StreamingAssets/aa/StandaloneWindows64";

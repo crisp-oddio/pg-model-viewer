@@ -23,7 +23,7 @@ from __future__ import annotations
 import argparse, glob, hashlib, json, os, re, sys, time
 import numpy as np
 
-CATALOG_SCHEMA = 3
+CATALOG_SCHEMA = 4
 
 # Base-body face parts whose meshes carry extra submeshes (eyebrows/eyelashes)
 # that must NOT render with the primary material — sliced to submesh 0.
@@ -172,6 +172,52 @@ def _quat_to_mat(x, y, z, w):
 
 _R_STD_INV = _quat_to_mat(0.70710678, 0.0, 0.0, 0.70710678)  # scene Y-up → char Z-up
 _F = np.diag([-1.0, 1.0, 1.0])  # UnityPy OBJ export X-flip
+
+
+# ---- bind-pose correction (skinned meshes) -----------------------------------
+# Some gear meshes were skinned against a rotated/offset skeleton export (e.g.
+# eq-m2-chest-skintight-01 is Rz(90°); the f2 head is Rz(90°) + ~1m). At runtime
+# the shared avatar's bone matrices cancel that out; for a static doll we bake
+# the same correction: C = inv(refBind[bone]) · meshBind[bone], where ref is the
+# same-sex base body (which renders correctly as-is). Identity for most meshes.
+
+def _bind_map(mesh):
+    """bone-name-hash -> 4x4 bind matrix, or {} when the mesh has none."""
+    hashes = list(getattr(mesh, "m_BoneNameHashes", []) or [])
+    bps = list(getattr(mesh, "m_BindPose", []) or [])
+    out = {}
+    for h, m in zip(hashes, bps):
+        try:
+            arr = np.array([[m.e00, m.e01, m.e02, m.e03], [m.e10, m.e11, m.e12, m.e13],
+                            [m.e20, m.e21, m.e22, m.e23], [m.e30, m.e31, m.e32, m.e33]])
+        except AttributeError:
+            arr = np.array(m, dtype=np.float64).reshape(4, 4)
+        out[h] = arr
+    return out
+
+
+def bind_correction(bindmap, ref):
+    """(M3x3, offset3) in OBJ coordinates for a mesh whose bind space differs
+    from the reference skeleton's, or None when it matches (the common case).
+    Uses the largest cluster of per-bone corrections (head meshes mix head and
+    slightly-leaned spine bones)."""
+    common = [h for h in bindmap if h in ref]
+    if not common:
+        return None
+    cs = [np.linalg.inv(ref[h]) @ bindmap[h] for h in common]
+    # Cluster by rounded rotation; take the most common correction.
+    clusters = {}
+    for c in cs:
+        key = tuple(np.round(c[:3, :3], 1).flatten())
+        clusters.setdefault(key, []).append(c)
+    best = max(clusters.values(), key=len)
+    C = best[0]
+    rot, t = C[:3, :3], C[:3, 3]
+    if np.allclose(rot, np.eye(3), atol=0.02) and np.allclose(t, 0, atol=0.01):
+        return None
+    m = _F @ rot @ _F
+    off = _F @ t
+    return m, off
 
 
 def char_space_bake(transform):
@@ -323,6 +369,26 @@ def extract_gear(bundle_path, out, seen_tex, only_re, skip_textures, force=False
             continue
         materials[m.m_Name] = extract_material(m, tex_dir, seen_tex, skip_textures)
 
+    # Bind-pose references: the per-sex base-body parts (which render correctly
+    # in character space as-is). Gear skinned against a rotated/offset skeleton
+    # export is detected by comparing its bind matrices to these.
+    bind_refs = {"m": {}, "f": {}}
+    for o in objs:
+        if o.type.name != "GameObject":
+            continue
+        go = o.read()
+        m_ref = re.match(r"^eq-x-([mf])2-(chest|legs|hands|feet)-0$", go.m_Name)
+        if not m_ref:
+            continue
+        r, tn = renderer_of(go)
+        if not r or tn != "SkinnedMeshRenderer":
+            continue
+        try:
+            for h, mat in _bind_map(r.m_Mesh.read()).items():
+                bind_refs[m_ref.group(1)].setdefault(h, mat)
+        except Exception:
+            continue
+
     # index meshes keyed by GameObject name (the EquipAppearance mesh key)
     exported = 0
     for o in objs:
@@ -353,14 +419,31 @@ def extract_gear(bundle_path, out, seen_tex, only_re, skip_textures, force=False
                         max_tris = subs[0].indexCount // 3
                 except Exception:
                     pass
-            # Bake real placement transforms (female head etc.) into the verts.
+            # Correct meshes not authored in character space. Skinned meshes:
+            # bind-pose comparison against the same-sex base body (the game
+            # cancels skeleton-export rotations through bone matrices — e.g.
+            # skintight chests are Rz(90°), the f2 head is Rz(90°) + ~1m).
+            # Unskinned meshes: bake the GameObject placement transform.
             bake = None
-            t = _go_transform(go)
-            if t is not None:
+            bm = {}
+            if tn == "SkinnedMeshRenderer":
                 try:
-                    bake = char_space_bake(t)
+                    bm = _bind_map(mesh)
+                except Exception:
+                    bm = {}
+            if bm:
+                sex = "f" if "f2-" in name else "m"
+                try:
+                    bake = bind_correction(bm, bind_refs[sex])
                 except Exception:
                     bake = None
+            else:
+                t = _go_transform(go)
+                if t is not None:
+                    try:
+                        bake = char_space_bake(t)
+                    except Exception:
+                        bake = None
             try:
                 stats = obj_to_glb(mesh.export(), glb_abs, max_tris=max_tris, bake=bake)
             except Exception as e:
