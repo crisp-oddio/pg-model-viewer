@@ -23,7 +23,7 @@ from __future__ import annotations
 import argparse, glob, hashlib, json, os, re, sys, time
 import numpy as np
 
-CATALOG_SCHEMA = 5
+CATALOG_SCHEMA = 6
 
 # Base-body face parts whose meshes carry extra submeshes (eyebrows/eyelashes)
 # that must NOT render with the primary material — sliced to submesh 0.
@@ -198,31 +198,55 @@ def _bind_map(mesh):
     return out
 
 
-def _foreign_skeleton_correction(bindmap):
+def _foreign_skeleton_correction(bindmap, transform=None):
     """Correction for a mesh skinned against a skeleton that shares NO bones
     with the base body (different bone naming — e.g. the science-02 / Fae Navy
-    set's 109-bone rig). If its bone positions span a Y-up humanoid (height in
-    Y instead of char-space Z), bake the scene→char +90°X rotation."""
+    set's foreign rig). These are authored in the prefab's own space, so the
+    placement = renderer-GO transform (rotation, translation AND scale — the
+    f2 legs ship at 1/100 scale with a ×100 GO), then scene→char. Candidates
+    are validated against the skeleton itself: the corrected bone positions
+    must span a Z-up humanoid. Mirroring GO transforms (det<0, the m2 gloves)
+    are skipped — they'd flip triangle winding; the plain scene→char rotation
+    is tried instead."""
     if len(bindmap) < 8:
         return None
     try:
         pos = np.array([np.linalg.inv(b)[:3, 3] for b in bindmap.values()])
     except np.linalg.LinAlgError:
         return None
-    span = pos.max(0) - pos.min(0)
-    if span[1] > 1.0 and span[1] > span[2] * 1.5:  # height lives in Y, not Z
-        return _F @ _R_STD_INV @ _F, np.zeros(3)
+
+    def humanoid_z_up(m, off):
+        p = pos @ m.T + off
+        span = p.max(0) - p.min(0)
+        return 1.2 < span[2] < 2.6 and span[2] > span[1] * 1.5
+
+    candidates = []
+    if transform is not None:
+        p, r, s = transform.m_LocalPosition, transform.m_LocalRotation, transform.m_LocalScale
+        m_go = _quat_to_mat(r.x, r.y, r.z, r.w) @ np.diag([s.x, s.y, s.z])
+        if np.linalg.det(m_go) > 0:
+            candidates.append((_R_STD_INV @ m_go,
+                               _R_STD_INV @ np.array([p.x, p.y, p.z], dtype=np.float64)))
+    candidates.append((_R_STD_INV, np.zeros(3)))  # plain Y-up → Z-up
+    candidates.append((np.eye(3), np.zeros(3)))   # already char space
+
+    for m, off in candidates:
+        if humanoid_z_up(m, off):
+            if np.allclose(m, np.eye(3), atol=1e-6) and np.allclose(off, 0, atol=1e-6):
+                return None
+            return _F @ m @ _F, _F @ off
     return None
 
 
-def bind_correction(bindmap, ref):
+def bind_correction(bindmap, ref, transform=None):
     """(M3x3, offset3) in OBJ coordinates for a mesh whose bind space differs
     from the reference skeleton's, or None when it matches (the common case).
     Uses the largest cluster of per-bone corrections (head meshes mix head and
-    slightly-leaned spine bones)."""
+    slightly-leaned spine bones). `transform` (the renderer's GameObject
+    transform) is only used for foreign-skeleton meshes."""
     common = [h for h in bindmap if h in ref]
     if not common:
-        return _foreign_skeleton_correction(bindmap)
+        return _foreign_skeleton_correction(bindmap, transform)
     cs = [np.linalg.inv(ref[h]) @ bindmap[h] for h in common]
     # Cluster by rounded rotation; take the most common correction.
     clusters = {}
@@ -460,7 +484,7 @@ def extract_gear(bundle_path, out, seen_tex, only_re, skip_textures, force=False
             if bm:
                 sex = "f" if "f2-" in name else "m"
                 try:
-                    bake = bind_correction(bm, bind_refs[sex])
+                    bake = bind_correction(bm, bind_refs[sex], _go_transform(go))
                 except Exception:
                     bake = None
             else:
@@ -564,7 +588,8 @@ def extract_individual_bundles(game_dir, out, seen_tex, only_re, skip_textures,
                 try:
                     bm = _bind_map(mesh)
                     if bm:
-                        bake = bind_correction(bm, ref)
+                        t = _go_transform(r.m_GameObject.read())
+                        bake = bind_correction(bm, ref, t)
                 except Exception:
                     bake = None
             try:
