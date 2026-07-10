@@ -152,6 +152,11 @@ function loadTexture(rel: string | undefined | null): THREE.Texture | null {
   const t = texLoader.load(store.assetUrl(`textures/${rel}`));
   t.anisotropy = 8;
   t.flipY = false; // glTF/textures already in correct orientation
+  // Mirrored gear parts (pauldrons, skirt panels) tile UVs past 1 and rely on
+  // wrap — three.js defaults to clamp-to-edge, which renders them as a flat
+  // smear of the edge texel (e.g. the Umrad Coat's black left pauldron).
+  t.wrapS = THREE.RepeatWrapping;
+  t.wrapT = THREE.RepeatWrapping;
   return t;
 }
 
