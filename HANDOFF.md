@@ -1,6 +1,22 @@
 # PG Model Viewer — Session Handoff
 
-**Date:** 2026-07-10 (Session 2 — Fae Navy / Summer Court boots extractor fixes, `CATALOG_SCHEMA = 6`)
+**Date:** 2026-07-10 (Session 3 — weapons in hand on the paper doll)
+
+## TL;DR — Session 3 (MainHand/OffHand on the Character doll)
+
+Paper-doll backlog #1 done — frontend-only (`TurntableViewer.vue`); no extractor/schema/Rust changes.
+
+- **Key discovery: weapon meshes are authored Y-up with the grip at the mesh origin** (sword blade spans −0.17..+0.84 Y; staff gripped in its upper third; bow at center; knives/hammers same). Shields are an XY plate with origin at the back face (where the forearm sits), facing +Z. So Character mode needs **no bbox orientation guessing**: place the mesh origin at the palm — `orientProp` remains only for Item mode.
+- `buildCharacter` no longer skips `is_weapon` slots: a third pass places them via `placeWeaponInHand` — no rotation by default (blade up); `OffHandShield` directive → `rotY(±π/2)` so the plate faces away from the body; Z-long oddballs (lutes/instruments) get stood up (`rotX(−π/2)`).
+- **Palm anchors are computed at runtime** (`handAnchors`) from the hands-region mesh actually on the doll (naked hands *or* equipped gloves — handles both sexes automatically): per-side (x<0 = character's right/main) vertex centroid **restricted to the lowest 15cm z-band per side**, because plate gauntlets extend up the forearm and a whole-mesh centroid put the hammer grip at mid-forearm. Fallback constants if no hands mesh: m (±0.564, −0.048, 1.031), f (±0.529, −0.134, 1.026) char space.
+- Facing/handedness: character faces −Y in char space (eyes bbox −Y of head center) → +Z world after the −π/2 X body rotation; right hand = char x<0 → world −X (screen-left, mirrored like a person facing you). MainHand → right, OffHand → left.
+- Verified via CDP screenshots (schtask `pgmv-dev`, drive script pattern from S2): m sword+shield, f staff+bow, m plate-gauntlets+hammer+Echo Horn. **CDP gotcha:** toggling `setViewMode("item"); setViewMode("character")` in one tick is a no-op (Vue batches → watcher never fires → spun rotation survives); sleep between toggles to get a frontal rebuild.
+- ⚠️ **The S1/S2 clobber risk materialized**: the real Roaming cache was schema 4 again this morning (installed v0.1.5's old sidecar re-extracted — presumably during the updater test). Re-extracted schema 6 with system python → `A:\Claude\pgmv-stage` → robocopy via detached schtask (dir + one-shot task `pgmv-sync` cleaned up after).
+- Backlog now: hair + appearance flags, race selector, non-rigid skinned gear, web hats, unsigned binaries; polish idea — angle held weapons to match the A-pose arm angle instead of hanging vertical.
+
+---
+
+# Session 2 handoff (2026-07-10) — Fae Navy / Summer Court boots extractor fixes, `CATALOG_SCHEMA = 6`
 **Machine:** Windows 11 (primary dev box)
 **Branch:** `main` (no branching yet) — everything committed + pushed. Repo is **public**.
 **Status:** ✅ `cargo test --lib` 18 pass. Fixes verified visually via CDP screenshots (dev app, both sexes). ✅ **v0.1.6 released** (Release workflow run 29115450432; all assets + `latest.json` verified serving 0.1.6) — the schema-4-sidecar clobber risk is gone; v0.1.5 installs will be offered 0.1.6. ⏳ Auto-updater live click-through still unverified (carried from S1) — the 0.1.5 → 0.1.6 prompt is the natural test.

@@ -187,6 +187,34 @@ function dyeInitFor(slot: ResolvedSlot): DyeInit {
   };
 }
 
+/** Placement of a held weapon on the paper doll (Character mode). */
+interface HandPlacement {
+  /** Group-space palm position where the weapon's grip (mesh origin) goes. */
+  anchor: THREE.Vector3;
+  /** World-X direction away from the body: +1 = character's left, −1 = right. */
+  outward: 1 | -1;
+  /** OffHandShield directive — the plate faces outward from the forearm. */
+  isShield: boolean;
+}
+
+/** Place a held weapon at the hand. Weapons are authored Y-up with the grip at
+ * the mesh origin (verified: sword blade spans −0.17..+0.84 Y, staff/knife/
+ * hammer similar, bow gripped at center), so no reorientation is needed —
+ * except shields (an XY plate, origin at the back face where the forearm sits,
+ * facing +Z → turned to face away from the body) and Z-long oddballs like
+ * instruments (stood upright). */
+function placeWeaponInHand(mesh: THREE.Mesh, hand: HandPlacement) {
+  mesh.geometry.computeBoundingBox();
+  const size = new THREE.Vector3();
+  mesh.geometry.boundingBox!.getSize(size);
+  if (hand.isShield) {
+    mesh.rotation.y = (Math.PI / 2) * hand.outward;
+  } else if (size.z > size.y && size.z > size.x) {
+    mesh.rotation.x = -Math.PI / 2;
+  }
+  mesh.position.copy(hand.anchor);
+}
+
 /** Stand a weapon/prop upright: longest bbox axis → Y (up), thinnest → Z
  * (depth), so shields face the camera and staves/swords stand on end. */
 function orientProp(mesh: THREE.Mesh) {
@@ -218,23 +246,32 @@ function orientProp(mesh: THREE.Mesh) {
  * Load one resolved slot's geometry, apply its Gorgon/Character dye material,
  * and add it to the model group. Body meshes carry their world offset in the
  * vertices (bind-pose character space) so multiple pieces auto-assemble into a
- * standing figure; weapons are oriented by bounding box instead. `dyeKey` names
- * the material in `dyeMaterials` for live recoloring (defaults to the slot).
+ * standing figure; weapons are oriented by bounding box instead — unless a
+ * `hand` placement is given (Character mode), which grips them at the palm.
+ * `dyeKey` names the material in `dyeMaterials` for live recoloring (defaults
+ * to the slot). Returns the added mesh (or null if skipped/superseded).
  */
-async function addMesh(slot: ResolvedSlot, seq: number, dyeKey = slot.slot): Promise<void> {
-  if (!slot.mesh_file) return;
+async function addMesh(
+  slot: ResolvedSlot,
+  seq: number,
+  dyeKey = slot.slot,
+  hand?: HandPlacement,
+): Promise<THREE.Mesh | null> {
+  if (!slot.mesh_file) return null;
   const gltf = await gltfLoader.loadAsync(store.assetUrl(slot.mesh_file));
   // A newer rebuild may have started (and cleared the scene) while this mesh
   // was loading — if so, drop it instead of appending into the fresh scene.
-  if (seq !== buildSeq) return;
+  if (seq !== buildSeq) return null;
   let found: THREE.Mesh | null = null;
   gltf.scene.traverse((o) => {
     if ((o as THREE.Mesh).isMesh && !found) found = o as THREE.Mesh;
   });
-  if (!found) return;
+  if (!found) return null;
   const mesh: THREE.Mesh = found;
 
-  if (slot.is_weapon) {
+  if (slot.is_weapon && hand) {
+    placeWeaponInHand(mesh, hand);
+  } else if (slot.is_weapon) {
     // Weapons/props have varied native orientations. Stand them up generically:
     // longest bounding-box axis → vertical (Y), thinnest → depth (Z, toward the
     // camera) so flat items like shields face front.
@@ -260,6 +297,61 @@ async function addMesh(slot: ResolvedSlot, seq: number, dyeKey = slot.slot): Pro
   mesh.material = dm.material;
   dyeMaterials.set(dyeKey, dm);
   modelGroup.add(mesh);
+  return mesh;
+}
+
+// Measured palm centroids of the naked base hands, char space (Z-up), used
+// only if no hands-region mesh loaded: (±x, y, z_height).
+const PALM_FALLBACK = { m: [0.564, -0.048, 1.031], f: [0.529, -0.134, 1.026] } as const;
+
+/**
+ * Group-space palm anchors for held weapons, one per hand. Computed from the
+ * hands-region mesh actually on the doll (naked hands or gloves — handles both
+ * sexes and gauntlet offsets): the per-side vertex centroid ≈ the palm. The
+ * character faces −Y in char space, so their right (main) hand is x<0, which
+ * the −π/2 X body rotation maps to world −X (screen-left, mirrored like a
+ * person facing you).
+ */
+function handAnchors(handsMesh: THREE.Mesh | null): { main: THREE.Vector3; off: THREE.Vector3 } {
+  if (!handsMesh) {
+    const [x, y, z] = PALM_FALLBACK[store.sex];
+    // char (x,y,z) → group (x, z, −y) under the −π/2 X rotation.
+    return { main: new THREE.Vector3(-x, z, -y), off: new THREE.Vector3(x, z, -y) };
+  }
+  const pos = handsMesh.geometry.getAttribute("position");
+  // Gauntlets extend up the forearm and would drag a whole-mesh centroid
+  // toward the elbow; the physical hand is always the bottom of the region
+  // (mesh-local char space is Z-up), so average only the lowest 15cm per side.
+  let zMinMain = Infinity;
+  let zMinOff = Infinity;
+  for (let i = 0; i < pos.count; i++) {
+    const z = pos.getZ(i);
+    if (pos.getX(i) < 0) zMinMain = Math.min(zMinMain, z);
+    else zMinOff = Math.min(zMinOff, z);
+  }
+  const main = new THREE.Vector3();
+  const off = new THREE.Vector3();
+  let nMain = 0;
+  let nOff = 0;
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i);
+    const z = pos.getZ(i);
+    if (z > (x < 0 ? zMinMain : zMinOff) + 0.15) continue;
+    const v = x < 0 ? main : off;
+    v.x += x;
+    v.y += pos.getY(i);
+    v.z += z;
+    if (x < 0) nMain++;
+    else nOff++;
+  }
+  if (nMain > 0) main.divideScalar(nMain);
+  if (nOff > 0) off.divideScalar(nOff);
+  // Mesh-local (char space) → group space via the mesh's own transform
+  // (position is still 0 here — frameCamera recenters only after the build).
+  handsMesh.updateMatrix();
+  main.applyMatrix4(handsMesh.matrix);
+  off.applyMatrix4(handsMesh.matrix);
+  return { main, off };
 }
 
 // Base-body regions covered (replaced) by equipped armor in the same slot —
@@ -294,29 +386,57 @@ async function buildCharacter(seq: number): Promise<void> {
       .map(([slot]) => slot),
   );
 
+  // The hands-region mesh on the doll (naked hands or gloves) anchors held
+  // weapons at the palms.
+  let handsMesh: THREE.Mesh | null = null;
+
   // Naked base body first (skip a region that armor fully replaces).
   for (const part of store.baseBody) {
     if (HIDE_BASE_WHEN_EQUIPPED.has(part.slot) && covered.has(part.slot)) continue;
     try {
-      await addMesh(part, seq, `base:${part.slot}`);
+      const m = await addMesh(part, seq, `base:${part.slot}`);
+      if (part.slot === "Hands" && m) handsMesh = m;
     } catch (e) {
       console.warn(`Failed to load base part ${part.slot}:`, e);
     }
     if (seq !== buildSeq) return;
   }
 
-  // Equipped gear layered on top. Weapons are skipped in the paper doll for now
-  // (they need hand placement — a follow-up); worn armor/appearance renders.
-  // Keyed by directive slot (same as item mode) so DyeControls, which emits the
-  // active item's directive slot, recolors the matching piece on the body.
+  // Equipped gear layered on top (weapons handled separately below — they need
+  // hand placement, not the body rotation). Keyed by directive slot (same as
+  // item mode) so DyeControls, which emits the active item's directive slot,
+  // recolors the matching piece on the body.
   for (const [equipSlot, appr] of Object.entries(equipped)) {
     if (!appr.renderable) continue;
     for (const rs of appr.slots) {
       if (!rs.mesh_file || rs.is_weapon) continue;
       try {
-        await addMesh(rs, seq);
+        const m = await addMesh(rs, seq);
+        if (rs.slot === "Hands" && m) handsMesh = m;
       } catch (e) {
         console.warn(`Failed to load ${equipSlot}/${rs.slot}:`, e);
+      }
+      if (seq !== buildSeq) return;
+    }
+  }
+
+  // Held weapons: MainHand in the character's right hand, OffHand in the left,
+  // gripped at the palm (weapon meshes carry their grip at the origin).
+  const anchors = handAnchors(handsMesh);
+  for (const [equipSlot, appr] of Object.entries(equipped)) {
+    if (!appr.renderable) continue;
+    const outward: 1 | -1 = equipSlot === "OffHand" ? 1 : -1;
+    const anchor = outward === 1 ? anchors.off : anchors.main;
+    for (const rs of appr.slots) {
+      if (!rs.mesh_file || !rs.is_weapon) continue;
+      try {
+        await addMesh(rs, seq, rs.slot, {
+          anchor,
+          outward,
+          isShield: /shield/i.test(rs.slot),
+        });
+      } catch (e) {
+        console.warn(`Failed to load weapon ${equipSlot}/${rs.slot}:`, e);
       }
       if (seq !== buildSeq) return;
     }
