@@ -1,9 +1,25 @@
 # PG Model Viewer — Session Handoff
 
-**Date:** 2026-07-09/10 (Session 1 — extraction from glogger, paper-doll polish, v0.1.1 → v0.1.5 shipped)
+**Date:** 2026-07-10 (Session 2 — Fae Navy / Summer Court boots extractor fixes, `CATALOG_SCHEMA = 5`)
 **Machine:** Windows 11 (primary dev box)
 **Branch:** `main` (no branching yet) — everything committed + pushed. Repo is **public**.
-**Status:** ✅ `cargo test --lib` 18 pass; `vue-tsc` + `vite build` clean; **v0.1.5 released** (manifest verified serving 0.1.5). User visually verified male + female paper dolls, dye, loadouts, icons, and the Umrad/Court armor fixes. ⏳ **Auto-updater's live click-through (v0.1.4 → v0.1.5 in the title bar) is the one unverified leg** — user was about to test it.
+**Status:** ✅ `cargo test --lib` 18 pass. Fixes verified visually via CDP screenshots (dev app). ⚠️ **Needs a v0.1.6 release**: the local cache is now schema 5 but shipped v0.1.5 sidecars extract schema 4 — if the user runs the *release* build and clicks re-extract, the old sidecar clobbers the fixed cache back to schema 4. ⏳ Auto-updater live click-through still unverified (carried from S1).
+
+## TL;DR — Session 2 (Fae Navy + Summer Court boots)
+
+Three root causes, all in `tools/model_extractor/extract.py` (schema 4 → **5**; bumped with `EXPECTED_CATALOG_SCHEMA` in `model_assets.rs`):
+
+1. **Boots of the Summer Court offset ~6cm forward/down** (v0.1.4 bind-correction regression): `eq-{sex}2-feet-greaves-steel-04` has *non-rigid* per-bone binds — 4 bones identity, 4 bones ~2°/≤6cm (mirrored pairs). Rotation-only clustering lumped all 8 into one cluster and baked `best[0]`'s 6cm offset mesh-wide. Fix: cluster representative = **mean of the cluster** (mirrored tweaks cancel; keeps the 0.39× *scale* corrections — do NOT SVD-orthonormalize) + widened identity band (`‖rot−I‖<0.1 ∧ ‖t‖<0.05` → no bake; real skeleton-export corrections are 90°/1m/0.39×). Whole-cache blast radius verified: only steel-04 + the 8 science glbs changed; f2 heads moved <1cm.
+2. **Fae Navy (science-02 set) exploded/tipped-over meshes**: the set lives in *individual* bundles (`defaultlocalgroup_assets_eq-{m,f}2-*-science-02_*`), whose extraction path had **no correction at all**, and the meshes (`Male_Mech_*`) are skinned to a **foreign 109-bone skeleton (0 common bone hashes with the base body) authored Y-up** (bone positions span Y 0→1.89). Fixes: (a) `bind_correction` falls back to `_foreign_skeleton_correction` — if bone positions span a Y-up humanoid (span.y>1.0 ∧ span.y>1.5·span.z), bake the scene→char +90°X; (b) `extract_individual_bundles` now takes `bind_refs` from `extract_gear` and applies per-part bind correction (per-part `bake` list support in `obj_to_glb`), **gated to `eq-m2-/eq-f2-` keys** so werewolf/cow plate gear stays untouched. Result: science chest lands at z 1.10→1.79 = base-body chest exactly.
+3. **Fae Navy white/undyeable ("No dyeable pieces equipped")**: the `^Armor=` materials (`m2-body-science-02`, `x2-feet-science-02`, …, 12 total incl. `-dirty`) live in bundles named `defaultlocalgroup_assets_[mfx]2-*` which matched **none** of the material-scan globs. Fix: added that glob to `extract_extra_materials` (+12 bundles, all triple-dye except x2-hands = double). Also: `force` (schema-mismatch re-export) now propagates to `extract_individual_bundles`/`extract_packs` — without it, schema bumps skipped existing individual-bundle glbs and upgrades would never fix the science set.
+
+**Verification:** full re-extract (73s, 708 materials/1030 textures) → robocopy into real Roaming **via detached schtask** (MSIX gotcha, see S1) → dev app via `schtasks /Run /TN pgmv-dev` → CDP :9223 driven with a node script (Pinia store `modelViewer` reachable at `document.querySelector('#app').__vue_app__.config.globalProperties.$pinia._s.get('modelViewer')`; call `setSex/selectSlot/chooseItem/setViewMode`, `Page.captureScreenshot`). Boots attach correctly; full Fae Navy loadout assembles + dyes.
+
+---
+
+# Session 1 handoff (2026-07-09/10) — extraction from glogger, v0.1.1 → v0.1.5
+
+**Status then:** ✅ `cargo test --lib` 18 pass; `vue-tsc` + `vite build` clean; **v0.1.5 released** (manifest verified serving 0.1.5). User visually verified male + female paper dolls, dye, loadouts, icons, and the Umrad/Court armor fixes. ⏳ **Auto-updater's live click-through (v0.1.4 → v0.1.5 in the title bar) is the one unverified leg** — user was about to test it.
 
 ## TL;DR — Session 1
 

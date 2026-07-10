@@ -23,7 +23,7 @@ from __future__ import annotations
 import argparse, glob, hashlib, json, os, re, sys, time
 import numpy as np
 
-CATALOG_SCHEMA = 4
+CATALOG_SCHEMA = 5
 
 # Base-body face parts whose meshes carry extra submeshes (eyebrows/eyelashes)
 # that must NOT render with the primary material — sliced to submesh 0.
@@ -87,18 +87,27 @@ def obj_to_glb(obj_txt, out_path: str, max_tris: int = None, bake=None) -> dict:
     otherwise render with the wrong material).
     `bake` is an optional (M3x3, offset3) transform applied to positions
     (and M to normals) — used to bake a GameObject placement transform into
-    parts not authored in bind-pose character space (e.g. the female head)."""
+    parts not authored in bind-pose character space (e.g. the female head).
+    Pass a list (one entry per part, None allowed) for per-part bakes."""
     from pygltflib import (GLTF2, Scene, Node, Mesh as GMesh, Primitive, Attributes,
                            Accessor, BufferView, Buffer, ARRAY_BUFFER,
                            ELEMENT_ARRAY_BUFFER, FLOAT, UNSIGNED_INT, SCALAR, VEC2, VEC3)
     parts = [obj_txt] if isinstance(obj_txt, str) else list(obj_txt)
+    bakes = bake if isinstance(bake, list) else [bake] * len(parts)
     pos_all, nrm_all, uv_all, tri_all = [], [], [], []
     base = 0
-    for txt in parts:
+    for txt, bk in zip(parts, bakes):
         parsed = _parse_obj(txt)
         if not parsed:
             continue
         p, n, u, t = parsed
+        if bk is not None:
+            m, off = bk
+            # Keep float32: the accessors declare FLOAT, and a float64 matrix
+            # would silently promote the arrays (writing 8-byte floats into a
+            # buffer read as 4-byte → garbage geometry).
+            p = (p @ m.T + off).astype(np.float32)
+            n = (n @ m.T).astype(np.float32)  # rotation-only, no rescale needed
         pos_all.append(p); nrm_all.append(n); uv_all.append(u)
         tri_all.append(t + base)
         base += len(p)
@@ -110,13 +119,6 @@ def obj_to_glb(obj_txt, out_path: str, max_tris: int = None, bake=None) -> dict:
     tris = np.concatenate(tri_all).astype(np.uint32)
     if max_tris is not None:
         tris = tris[: max_tris * 3]
-    if bake is not None:
-        m, off = bake
-        # Keep float32: the accessors declare FLOAT, and a float64 matrix
-        # would silently promote the arrays (writing 8-byte floats into a
-        # buffer read as 4-byte → garbage geometry).
-        pos = (pos @ m.T + off).astype(np.float32)
-        nrm = (nrm @ m.T).astype(np.float32)  # rotation-only, no rescale needed
 
     blob = b""
     def add(a: np.ndarray):
@@ -196,6 +198,23 @@ def _bind_map(mesh):
     return out
 
 
+def _foreign_skeleton_correction(bindmap):
+    """Correction for a mesh skinned against a skeleton that shares NO bones
+    with the base body (different bone naming — e.g. the science-02 / Fae Navy
+    set's 109-bone rig). If its bone positions span a Y-up humanoid (height in
+    Y instead of char-space Z), bake the scene→char +90°X rotation."""
+    if len(bindmap) < 8:
+        return None
+    try:
+        pos = np.array([np.linalg.inv(b)[:3, 3] for b in bindmap.values()])
+    except np.linalg.LinAlgError:
+        return None
+    span = pos.max(0) - pos.min(0)
+    if span[1] > 1.0 and span[1] > span[2] * 1.5:  # height lives in Y, not Z
+        return _F @ _R_STD_INV @ _F, np.zeros(3)
+    return None
+
+
 def bind_correction(bindmap, ref):
     """(M3x3, offset3) in OBJ coordinates for a mesh whose bind space differs
     from the reference skeleton's, or None when it matches (the common case).
@@ -203,7 +222,7 @@ def bind_correction(bindmap, ref):
     slightly-leaned spine bones)."""
     common = [h for h in bindmap if h in ref]
     if not common:
-        return None
+        return _foreign_skeleton_correction(bindmap)
     cs = [np.linalg.inv(ref[h]) @ bindmap[h] for h in common]
     # Cluster by rounded rotation; take the most common correction.
     clusters = {}
@@ -211,9 +230,16 @@ def bind_correction(bindmap, ref):
         key = tuple(np.round(c[:3, :3], 1).flatten())
         clusters.setdefault(key, []).append(c)
     best = max(clusters.values(), key=len)
-    C = best[0]
+    # Represent the cluster by its mean (not an arbitrary member): gear with
+    # slight non-rigid per-bone tweaks (greaves-steel-04 mixes identity bones
+    # with mirrored ~2°/6cm ones) must not get a single bone's offset baked
+    # mesh-wide. The mean keeps scale corrections intact (0.39× chests), and
+    # tight clusters make it ≈ a member anyway.
+    C = np.mean(best, axis=0)
     rot, t = C[:3, :3], C[:3, 3]
-    if np.allclose(rot, np.eye(3), atol=0.02) and np.allclose(t, 0, atol=0.01):
+    # Skeleton-export corrections are large (90°, ~1m, 0.39×); anything within
+    # a few degrees / cm is normal skinning variance — leave the mesh alone.
+    if np.linalg.norm(rot - np.eye(3)) < 0.1 and np.linalg.norm(t) < 0.05:
         return None
     m = _F @ rot @ _F
     off = _F @ t
@@ -462,7 +488,7 @@ def extract_gear(bundle_path, out, seen_tex, only_re, skip_textures, force=False
         appearances[name] = {"meshFile": glb_rel, "sex": sex, "slot": slot,
                              "defaultMaterial": default_mat, "skinned": tn == "SkinnedMeshRenderer"}
     log(f"[gear] {exported} meshes, {len(materials)} materials")
-    return appearances, materials
+    return appearances, materials, bind_refs
 
 
 def _renderer_go_name(r):
@@ -472,16 +498,23 @@ def _renderer_go_name(r):
         return ""
 
 
-def extract_individual_bundles(game_dir, out, seen_tex, only_re, skip_textures):
+def extract_individual_bundles(game_dir, out, seen_tex, only_re, skip_textures,
+                               bind_refs=None, force=False):
     """Extract each individual `defaultlocalgroup_assets_<key>_<hash>.bundle` as
     one merged model keyed by its **addressable key** (the name EquipAppearance
     references, e.g. `eq-x-flask1`, `eq-w-plate-chest-1`) — not by the internal
     child-mesh name. Weapons (eq-x-*/eq-orb-*) go in `weapons`; keys with a slot
     token (chest/legs/…) go in `appearances`. All in-bundle materials are
-    indexed so `^Armor=` overrides resolve."""
+    indexed so `^Armor=` overrides resolve.
+
+    Modern humanoid gear (eq-m2-*/eq-f2-*) gets the same bind-pose correction
+    as newmodel meshes (vs `bind_refs`) — the science-02 / Fae Navy set lives
+    here, skinned to a foreign Y-up skeleton. Other keys (eq-w-plate werewolf
+    etc.) render correctly raw and are left untouched."""
     import UnityPy
     weapons, appearances, materials = {}, {}, {}
     tex_dir = os.path.join(out, "textures")
+    bind_refs = bind_refs or {"m": {}, "f": {}}
 
     paths = set(glob.glob(os.path.join(game_dir, "defaultlocalgroup_assets_eq-*")))
     n_bundles = 0
@@ -510,7 +543,9 @@ def extract_individual_bundles(game_dir, out, seen_tex, only_re, skip_textures):
 
         # Collect renderer meshes (merged into one model), skipping sheath/mount
         # alternates. Track the primary (first real) material.
-        part_objs, primary_mat = [], None
+        correct_binds = key.startswith(("eq-m2-", "eq-f2-"))
+        ref = bind_refs["f"] if "f2-" in key else bind_refs["m"]
+        part_objs, part_bakes, primary_mat = [], [], None
         for o in objs:
             if o.type.name not in ("MeshRenderer", "SkinnedMeshRenderer"):
                 continue
@@ -524,8 +559,17 @@ def extract_individual_bundles(game_dir, out, seen_tex, only_re, skip_textures):
             mesh = mesh_of(r, o.type.name, None)
             if not mesh:
                 continue
+            bake = None
+            if correct_binds and o.type.name == "SkinnedMeshRenderer":
+                try:
+                    bm = _bind_map(mesh)
+                    if bm:
+                        bake = bind_correction(bm, ref)
+                except Exception:
+                    bake = None
             try:
                 part_objs.append(mesh.export())
+                part_bakes.append(bake)
             except Exception:
                 continue
             if primary_mat is None:
@@ -539,9 +583,9 @@ def extract_individual_bundles(game_dir, out, seen_tex, only_re, skip_textures):
 
         glb_rel = f"meshes/{safe_name(key)}.glb"
         glb_abs = os.path.join(out, glb_rel.replace("/", os.sep))
-        if not os.path.exists(glb_abs):
+        if force or not os.path.exists(glb_abs):
             try:
-                if not obj_to_glb(part_objs, glb_abs):
+                if not obj_to_glb(part_objs, glb_abs, bake=part_bakes):
                     continue
             except Exception as e:
                 log(f"    ! {key}: {e}"); continue
@@ -606,7 +650,7 @@ def _subtree_meshes(go):
     return parts, primary_mat
 
 
-def extract_packs(game_dir, out, seen_tex, only_re, skip_textures):
+def extract_packs(game_dir, out, seen_tex, only_re, skip_textures, force=False):
     """Extract weapons from shared packs (e.g. myfg-weapon-pack) where each
     weapon is an `eq-x-*` GameObject containing its meshes as children — keyed
     by that GameObject name (the EquipAppearance key)."""
@@ -643,7 +687,7 @@ def extract_packs(game_dir, out, seen_tex, only_re, skip_textures):
                     continue
                 glb_rel = f"meshes/{safe_name(name)}.glb"
                 glb_abs = os.path.join(out, glb_rel.replace("/", os.sep))
-                if not os.path.exists(glb_abs):
+                if force or not os.path.exists(glb_abs):
                     try:
                         if not obj_to_glb(parts, glb_abs):
                             continue
@@ -657,12 +701,14 @@ def extract_packs(game_dir, out, seen_tex, only_re, skip_textures):
 def extract_extra_materials(game_dir, out, seen_tex, skip_textures, needed=None):
     """Scan material-bearing bundles (plate/armor/body/mat-*) for named dye
     materials referenced by gear `^Armor=` (e.g. WerewolfPlate1, CowArmor1) that
-    live outside the mesh bundle."""
+    live outside the mesh bundle. `[mfx]2-*` bundles carry per-sex material
+    keys for modern gear (e.g. m2-body-science-02, x2-feet-science-02 — the
+    Fae Navy set) that match none of the other patterns."""
     import UnityPy
     materials = {}
     tex_dir = os.path.join(out, "textures")
     globs = ["defaultlocalgroup_assets_*plate*", "defaultlocalgroup_assets_*armor*",
-             "*mat-*"]
+             "defaultlocalgroup_assets_[mfx]2-*", "*mat-*"]
     paths = set()
     for g in globs:
         paths |= set(glob.glob(os.path.join(game_dir, g)))
@@ -725,11 +771,12 @@ def main():
     gear_bundle = gear_bundles[0]
     src_hash = hashlib.sha1(os.path.basename(gear_bundle).encode()).hexdigest()[:12]
 
-    appearances, materials = extract_gear(gear_bundle, args.out, seen_tex, only_re, args.skip_textures, force=force)
+    appearances, materials, bind_refs = extract_gear(gear_bundle, args.out, seen_tex, only_re, args.skip_textures, force=force)
     weapons = {}
     if not args.no_weapons:
         w, ind_app, ind_mats = extract_individual_bundles(
-            args.game_dir, args.out, seen_tex, only_re, args.skip_textures)
+            args.game_dir, args.out, seen_tex, only_re, args.skip_textures,
+            bind_refs=bind_refs, force=force)
         weapons.update(w)
         # newmodel (extract_gear) takes priority; individual bundles fill gaps.
         for k, v in ind_app.items():
@@ -737,7 +784,7 @@ def main():
         for k, v in ind_mats.items():
             materials.setdefault(k, v)
         # Shared weapon packs (the bulk of weapons live here).
-        pw, pmats = extract_packs(args.game_dir, args.out, seen_tex, only_re, args.skip_textures)
+        pw, pmats = extract_packs(args.game_dir, args.out, seen_tex, only_re, args.skip_textures, force=force)
         for k, v in pw.items():
             weapons.setdefault(k, v)
         for k, v in pmats.items():
