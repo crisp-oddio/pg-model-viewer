@@ -142,6 +142,8 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Signs the updater artifacts (latest.json signatures).
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         with:
           tauriScript: npx tauri
           args: ${{ matrix.args }} --config '{"bundle":{"externalBin":["binaries/model-extractor"]},"app":{"windows":[{"title":"PG Model Viewer v${{ needs.bump.outputs.version }}"}]}}'
@@ -170,6 +172,21 @@ jobs:
           for f in "$BUNDLE_DIR"/appimage/*.AppImage; do
             [ -f "$f" ] && cp "$f" "release-artifacts/pg-model-viewer-${VERSION}-linux.AppImage"
           done
+
+          # Updater artifacts + signatures (createUpdaterArtifacts):
+          # Windows updates via the NSIS exe, macOS via .app.tar.gz, Linux via AppImage.
+          for f in "$BUNDLE_DIR"/nsis/*.exe.sig; do
+            [ -f "$f" ] && cp "$f" "release-artifacts/pg-model-viewer-${VERSION}-windows-setup.exe.sig"
+          done
+          for f in "$BUNDLE_DIR"/macos/*.app.tar.gz; do
+            [ -f "$f" ] && cp "$f" "release-artifacts/pg-model-viewer-${VERSION}-macos.app.tar.gz"
+          done
+          for f in "$BUNDLE_DIR"/macos/*.app.tar.gz.sig; do
+            [ -f "$f" ] && cp "$f" "release-artifacts/pg-model-viewer-${VERSION}-macos.app.tar.gz.sig"
+          done
+          for f in "$BUNDLE_DIR"/appimage/*.AppImage.sig; do
+            [ -f "$f" ] && cp "$f" "release-artifacts/pg-model-viewer-${VERSION}-linux.AppImage.sig"
+          done
           ls -la release-artifacts/
 
       - name: Upload platform artifacts
@@ -189,6 +206,43 @@ jobs:
           pattern: artifacts-*
           path: all-artifacts
           merge-multiple: true
+
+      - name: Generate latest.json updater manifest
+        env:
+          VERSION: ${{ needs.bump.outputs.version }}
+        run: |
+          TAG="v${VERSION}"
+          BASE_URL="https://github.com/${{ github.repository }}/releases/download/$TAG"
+
+          WIN_SIG=""; MAC_SIG=""; LINUX_SIG=""
+          [ -f "all-artifacts/pg-model-viewer-${VERSION}-windows-setup.exe.sig" ] && \
+            WIN_SIG=$(cat "all-artifacts/pg-model-viewer-${VERSION}-windows-setup.exe.sig")
+          [ -f "all-artifacts/pg-model-viewer-${VERSION}-macos.app.tar.gz.sig" ] && \
+            MAC_SIG=$(cat "all-artifacts/pg-model-viewer-${VERSION}-macos.app.tar.gz.sig")
+          [ -f "all-artifacts/pg-model-viewer-${VERSION}-linux.AppImage.sig" ] && \
+            LINUX_SIG=$(cat "all-artifacts/pg-model-viewer-${VERSION}-linux.AppImage.sig")
+
+          # Only include platforms whose signed artifact exists.
+          PLATFORMS="{"; FIRST=true
+          if [ -n "$WIN_SIG" ]; then
+            PLATFORMS="$PLATFORMS\"windows-x86_64\":{\"url\":\"${BASE_URL}/pg-model-viewer-${VERSION}-windows-setup.exe\",\"signature\":\"${WIN_SIG}\"}"
+            FIRST=false
+          fi
+          if [ -n "$MAC_SIG" ]; then
+            [ "$FIRST" = false ] && PLATFORMS="$PLATFORMS,"
+            PLATFORMS="$PLATFORMS\"darwin-aarch64\":{\"url\":\"${BASE_URL}/pg-model-viewer-${VERSION}-macos.app.tar.gz\",\"signature\":\"${MAC_SIG}\"}"
+            FIRST=false
+          fi
+          if [ -n "$LINUX_SIG" ]; then
+            [ "$FIRST" = false ] && PLATFORMS="$PLATFORMS,"
+            PLATFORMS="$PLATFORMS\"linux-x86_64\":{\"url\":\"${BASE_URL}/pg-model-viewer-${VERSION}-linux.AppImage\",\"signature\":\"${LINUX_SIG}\"}"
+          fi
+          PLATFORMS="$PLATFORMS}"
+
+          PUB_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          printf '{"version":"%s","notes":"See the release page for details.","pub_date":"%s","platforms":%s}\n' \
+            "$VERSION" "$PUB_DATE" "$PLATFORMS" > all-artifacts/latest.json
+          cat all-artifacts/latest.json
 
       - name: Create GitHub Release
         env:

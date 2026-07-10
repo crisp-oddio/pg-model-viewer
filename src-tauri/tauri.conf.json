@@ -29,8 +29,20 @@
       }
     }
   },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IERGOEMzRkY5NDI0MkNDOUIKUldTYnpFSkMrVCtNMzVuRklGTzhTZHY4R3RRRE96Wm1RUlh3ZWtabmVZTCs3UVZlWXVtWHlxUWkK",
+      "endpoints": [
+        "https://github.com/crisp-oddio/pg-model-viewer/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": [
       "nsis",
       "app",

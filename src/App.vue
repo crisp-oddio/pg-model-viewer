@@ -7,7 +7,34 @@
           Project: Gorgon 3D item models &amp; live dye
         </span>
       </div>
-      <SettingsMenu />
+      <div class="flex items-center gap-3">
+        <!-- Auto-update banner -->
+        <div
+          v-if="updateStore.updateAvailable && !updateStore.dismissed"
+          class="flex items-center gap-1.5 text-[11px]">
+          <span v-if="updateStore.installing" class="text-accent-blue">
+            Updating… {{ updateStore.downloadProgress }}%
+          </span>
+          <template v-else>
+            <button
+              class="flex items-center gap-1.5 text-accent-blue hover:brightness-125 transition cursor-pointer"
+              @click="updateStore.downloadAndInstall()">
+              <span class="inline-block w-1.5 h-1.5 rounded-full bg-accent-blue animate-pulse" />
+              Update to v{{ updateStore.latestVersion }}
+            </button>
+            <button
+              class="text-text-dim hover:text-text-primary cursor-pointer"
+              title="Dismiss"
+              @click="updateStore.dismiss()">
+              &#10005;
+            </button>
+          </template>
+          <span v-if="updateStore.installError" class="text-accent-red truncate max-w-56">
+            {{ updateStore.installError }}
+          </span>
+        </div>
+        <SettingsMenu />
+      </div>
     </header>
     <main class="app-main">
       <ModelViewerScreen />
@@ -20,10 +47,15 @@ import { onMounted } from "vue";
 import ModelViewerScreen from "./components/Character/ModelViewer/ModelViewerScreen.vue";
 import SettingsMenu from "./components/SettingsMenu.vue";
 import { useSettingsStore } from "./stores/settingsStore";
+import { useUpdateStore } from "./stores/updateStore";
 
-// Apply persisted font + scale to the document on startup.
+// Apply persisted font + scale on startup; start the auto-update poll.
 const settings = useSettingsStore();
-onMounted(() => settings.applyAll());
+const updateStore = useUpdateStore();
+onMounted(() => {
+  settings.applyAll();
+  updateStore.startPolling();
+});
 </script>
 
 <style>
