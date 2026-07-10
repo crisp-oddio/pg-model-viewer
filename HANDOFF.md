@@ -3,7 +3,7 @@
 **Date:** 2026-07-10 (Session 2 — Fae Navy / Summer Court boots extractor fixes, `CATALOG_SCHEMA = 6`)
 **Machine:** Windows 11 (primary dev box)
 **Branch:** `main` (no branching yet) — everything committed + pushed. Repo is **public**.
-**Status:** ✅ `cargo test --lib` 18 pass. Fixes verified visually via CDP screenshots (dev app). ⚠️ **Needs a v0.1.6 release**: the local cache is now schema 5 but shipped v0.1.5 sidecars extract schema 4 — if the user runs the *release* build and clicks re-extract, the old sidecar clobbers the fixed cache back to schema 4. ⏳ Auto-updater live click-through still unverified (carried from S1).
+**Status:** ✅ `cargo test --lib` 18 pass. Fixes verified visually via CDP screenshots (dev app, both sexes). ✅ **v0.1.6 released** (Release workflow run 29115450432; all assets + `latest.json` verified serving 0.1.6) — the schema-4-sidecar clobber risk is gone; v0.1.5 installs will be offered 0.1.6. ⏳ Auto-updater live click-through still unverified (carried from S1) — the 0.1.5 → 0.1.6 prompt is the natural test.
 
 ## TL;DR — Session 2 (Fae Navy + Summer Court boots)
 
