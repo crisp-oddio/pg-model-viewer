@@ -77,14 +77,17 @@ def _parse_obj(obj_txt: str):
     return pos, nrm, uv, np.array(tris, dtype=np.uint32)
 
 
-def obj_to_glb(obj_txt, out_path: str, max_tris: int = None) -> dict:
+def obj_to_glb(obj_txt, out_path: str, max_tris: int = None, bake=None) -> dict:
     """Write one or more UnityPy OBJ meshes into a single geometry-only .glb.
 
     `obj_txt` may be a single OBJ string or a list of them (multi-part models
     like a lute body + strings are merged into one geometry buffer).
     `max_tris` truncates to the first N triangles (submesh-0 slicing — used for
     base-body face parts whose extra submeshes carry brows/lashes that would
-    otherwise render with the wrong material)."""
+    otherwise render with the wrong material).
+    `bake` is an optional (M3x3, offset3) transform applied to positions
+    (and M to normals) — used to bake a GameObject placement transform into
+    parts not authored in bind-pose character space (e.g. the female head)."""
     from pygltflib import (GLTF2, Scene, Node, Mesh as GMesh, Primitive, Attributes,
                            Accessor, BufferView, Buffer, ARRAY_BUFFER,
                            ELEMENT_ARRAY_BUFFER, FLOAT, UNSIGNED_INT, SCALAR, VEC2, VEC3)
@@ -107,6 +110,10 @@ def obj_to_glb(obj_txt, out_path: str, max_tris: int = None) -> dict:
     tris = np.concatenate(tri_all).astype(np.uint32)
     if max_tris is not None:
         tris = tris[: max_tris * 3]
+    if bake is not None:
+        m, off = bake
+        pos = pos @ m.T + off
+        nrm = nrm @ m.T  # rotation-only, no rescale needed
 
     blob = b""
     def add(a: np.ndarray):
@@ -142,6 +149,43 @@ def obj_to_glb(obj_txt, out_path: str, max_tris: int = None) -> dict:
     g.set_binary_blob(blob)
     g.save_binary(out_path)
     return {"verts": int(len(pos)), "tris": int(len(tris) // 3)}
+
+
+# ---- placement-transform baking ---------------------------------------------
+# Most newmodel parts are authored in bind-pose character space (Z-up) and
+# their GameObject transform is one of two inert standard forms. A few parts
+# (the female head/teeth/eyelash, male teeth, web hats, foliage) are rigged to
+# a bone and carry a REAL placement transform — without baking it the female
+# head renders at hip height. char = R_std⁻¹ · (R_go · v + T_go), conjugated by
+# the OBJ exporter's X-flip.
+
+def _quat_to_mat(x, y, z, w):
+    return np.array([
+        [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+        [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+        [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)],
+    ], dtype=np.float64)
+
+
+_R_STD_INV = _quat_to_mat(0.70710678, 0.0, 0.0, 0.70710678)  # scene Y-up → char Z-up
+_F = np.diag([-1.0, 1.0, 1.0])  # UnityPy OBJ export X-flip
+
+
+def char_space_bake(transform):
+    """(M3x3, offset3) baking a GameObject's placement into character space in
+    OBJ coordinates, or None when the part is already in character space (the
+    two standard transform forms: identity, or -90°X with no offset)."""
+    p, r = transform.m_LocalPosition, transform.m_LocalRotation
+    pos = np.array([p.x, p.y, p.z], dtype=np.float64)
+    qx, qy, qz, qw = r.x, r.y, r.z, r.w
+    if np.allclose(pos, 0, atol=1e-3) and abs(qy) < 1e-3 and abs(qz) < 1e-3:
+        is_identity = abs(qx) < 1e-3 and abs(abs(qw) - 1.0) < 1e-3
+        is_std = abs(abs(qx) - 0.70710678) < 1e-3 and qx * qw < 0  # -90° X
+        if is_identity or is_std:
+            return None
+    m = _F @ _R_STD_INV @ _quat_to_mat(qx, qy, qz, qw) @ _F
+    off = _F @ (_R_STD_INV @ pos)
+    return m, off
 
 
 # ---- material / texture extraction -----------------------------------------
@@ -306,8 +350,16 @@ def extract_gear(bundle_path, out, seen_tex, only_re, skip_textures, force=False
                         max_tris = subs[0].indexCount // 3
                 except Exception:
                     pass
+            # Bake real placement transforms (female head etc.) into the verts.
+            bake = None
+            t = _go_transform(go)
+            if t is not None:
+                try:
+                    bake = char_space_bake(t)
+                except Exception:
+                    bake = None
             try:
-                stats = obj_to_glb(mesh.export(), glb_abs, max_tris=max_tris)
+                stats = obj_to_glb(mesh.export(), glb_abs, max_tris=max_tris, bake=bake)
             except Exception as e:
                 log(f"    ! mesh {name}: {e}"); continue
             if not stats:
