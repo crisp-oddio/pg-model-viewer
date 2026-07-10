@@ -1,9 +1,9 @@
 # PG Model Viewer — Session Handoff
 
-**Date:** 2026-07-09/10 (Session 1 — extraction from glogger, paper-doll polish, v0.1.1 + v0.1.2 shipped)
+**Date:** 2026-07-09/10 (Session 1 — extraction from glogger, paper-doll polish, v0.1.1 → v0.1.3 shipped)
 **Machine:** Windows 11 (primary dev box)
 **Branch:** `main` (no branching yet) — everything committed + pushed. Repo is **public**.
-**Status:** ✅ `cargo test --lib` 18 pass; `vue-tsc` + `vite build` clean; **v0.1.2 released** with all four installers; user visually verified male + female paper dolls, dye, loadouts, icons in the dev build.
+**Status:** ✅ `cargo test --lib` 18 pass; `vue-tsc` + `vite build` clean; **v0.1.3 released** (installers + signed updater artifacts + `latest.json`, all verified); user visually verified male + female paper dolls, dye, loadouts, icons in the dev build.
 
 ## TL;DR — Session 1
 
@@ -17,6 +17,10 @@ This app is glogger's 3D Model Viewer, extracted into its own repo (and purged f
 ### Shipped this session
 - **v0.1.1** — first release; proved the 3-platform pipeline (exec-bit on `build_sidecar.sh` was the only stumble; bump job is idempotent for re-releases).
 - **v0.1.2** — dye dropdowns (all **101 game dyes** from items.json `DyeColor` via `list_dyes`), dye persistence + **saved loadouts**, whole-outfit dye panel in Character mode, settings (font, 50–200% scale), slot-icon fill, and the extractor fixes below.
+- **v0.1.3** — **model grouping** (items sharing an appearance string collapse into one row with a ×N badge + member tooltip; chest 314 items → 39 models; search matches any member; rep prefers display names; `BrowsableItem.appearance_key`) and the **auto-updater** (below).
+
+### Auto-updater (v0.1.3+)
+Mirrors glogger: `tauri-plugin-updater` + `tauri-plugin-process`; checks `releases/latest/download/latest.json` 5s after startup + hourly (`updateStore.ts`); titlebar "Update to vX.Y.Z" button → download w/ progress → install (Windows `installMode: passive`) → relaunch. `bundle.createUpdaterArtifacts: true`; capabilities `updater:default` + `process:allow-restart`. **Signing**: keypair at `C:\Users\bwfre\.tauri\pg-model-viewer.key(.pub)` — **no password, BACK IT UP** (lose it = existing installs can't verify future updates); private key is the repo secret `TAURI_SIGNING_PRIVATE_KEY`; pubkey baked into `tauri.conf.json`. The workflow signs builds, collects `.sig` + macOS `.app.tar.gz`, and generates/attaches `latest.json` (windows-x86_64 = nsis exe, darwin-aarch64 = app.tar.gz, linux-x86_64 = AppImage; `.deb` never auto-updates — Tauri limitation). v0.1.1/v0.1.2 users need one final manual download of v0.1.3.
 
 ### Extractor fixes (the meat) — `CATALOG_SCHEMA = 3`
 1. **Face submesh slicing** (`BASE_FACE_RE`): head/eyes meshes carry brow/lash submeshes that rendered with the wrong material (dark band across the brow). Sliced to submesh 0.
