@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Project: Gorgon 3D asset extractor for glogger's Model Viewer.
+"""Project: Gorgon 3D asset extractor for PG Model Viewer.
 
 Reads the game's local Unity Addressable bundles and emits a compact,
 web-renderable cache:

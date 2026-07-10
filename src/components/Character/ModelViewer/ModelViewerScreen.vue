@@ -24,8 +24,8 @@
       class="flex flex-col items-center justify-center h-full gap-3 text-center px-6">
       <div class="text-lg font-medium text-text-secondary">Extract 3D models</div>
       <p class="text-sm text-text-muted max-w-md">
-        One-time extraction of gear models and textures from your local install
-        into glogger's cache. This takes about a minute.
+        One-time extraction of gear models and textures from your local
+        Project: Gorgon install into the app's cache. This takes about a minute.
       </p>
       <button class="btn-primary" :disabled="store.extracting" @click="store.runExtraction()">
         {{ store.extracting ? "Extracting…" : "Extract models" }}
