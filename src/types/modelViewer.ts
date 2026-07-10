@@ -46,6 +46,18 @@ export interface BrowsableItem {
   equip_slot: string | null;
   /** True if this item resolves to a mesh in the cache (many cosmetics don't). */
   has_model: boolean;
+  /** Raw appearance string — items sharing it render identically (group key). */
+  appearance_key: string | null;
+}
+
+/** One distinct model in the picker: all items sharing an appearance string. */
+export interface ItemGroup {
+  /** Representative item (shortest name — usually the base tier). */
+  rep: BrowsableItem;
+  /** Every member item name (for search + tooltip). */
+  names: string[];
+  /** Member item ids (for chosen-state checks against the loadout). */
+  ids: number[];
 }
 
 /** An item chosen for a loadout slot. */

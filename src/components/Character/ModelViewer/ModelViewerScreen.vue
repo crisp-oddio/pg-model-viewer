@@ -63,12 +63,18 @@
             <span class="text-[11px] text-text-dim uppercase tracking-wide">
               {{ activeSlotLabel }} items
             </span>
-            <span class="text-[10px] text-text-dim">{{ modeledCount }} with model</span>
+            <span class="text-[10px] text-text-dim">
+              {{ groupModels ? `${matchedGroups.length} models` : `${modeledCount} with model` }}
+            </span>
           </div>
 
           <label class="flex items-center gap-1.5 text-[11px] text-text-muted cursor-pointer select-none">
             <input v-model="onlyWithModel" type="checkbox" class="cursor-pointer" />
             Only items with a 3D model
+          </label>
+          <label class="flex items-center gap-1.5 text-[11px] text-text-muted cursor-pointer select-none">
+            <input v-model="groupModels" type="checkbox" class="cursor-pointer" />
+            Group items sharing a model
           </label>
 
           <!-- Search -->
@@ -84,29 +90,39 @@
             class="flex-1 min-h-0 overflow-y-auto flex flex-col gap-0.5"
             @scroll="onListScroll">
             <button
-              v-for="item in displayedItems"
-              :key="item.id"
+              v-for="g in displayedGroups"
+              :key="g.rep.id"
               class="flex items-center gap-2 px-2 py-1 rounded text-left text-xs cursor-pointer hover:bg-white/5"
               :class="[
-                { 'bg-accent-gold/15': isChosen(item.id) },
-                item.has_model ? '' : 'opacity-40',
+                { 'bg-accent-gold/15': isGroupChosen(g) },
+                g.rep.has_model ? '' : 'opacity-40',
               ]"
-              :title="item.has_model ? item.name : `${item.name} — no 3D model`"
-              @click="store.chooseItem(item)">
-              <GameIcon :icon-id="item.icon_id ?? undefined" size="sm" />
-              <span class="truncate">{{ item.name }}</span>
-              <span v-if="!item.has_model" class="ml-auto text-[9px] text-text-dim shrink-0">no model</span>
+              :title="groupTitle(g)"
+              @click="store.chooseItem(g.rep)">
+              <GameIcon :icon-id="g.rep.icon_id ?? undefined" size="sm" />
+              <span class="truncate">{{ g.rep.name }}</span>
+              <span
+                v-if="g.ids.length > 1"
+                class="ml-auto shrink-0 text-[9px] px-1 rounded bg-white/10 text-text-muted"
+                >×{{ g.ids.length }}</span
+              >
+              <span
+                v-if="!g.rep.has_model"
+                class="shrink-0 text-[9px] text-text-dim"
+                :class="{ 'ml-auto': g.ids.length <= 1 }"
+                >no model</span
+              >
             </button>
             <div v-if="store.itemsLoading" class="text-xs text-text-muted px-2 py-1">Loading…</div>
             <div
-              v-else-if="matchedItems.length === 0"
+              v-else-if="matchedGroups.length === 0"
               class="text-xs text-text-muted px-2 py-1">
               No {{ activeSlotLabel.toLowerCase() }} items.
             </div>
             <div
-              v-else-if="displayedItems.length < matchedItems.length"
+              v-else-if="displayedGroups.length < matchedGroups.length"
               class="text-[10px] text-text-dim px-2 py-1">
-              Showing {{ displayedItems.length }} of {{ matchedItems.length }} — scroll for more
+              Showing {{ displayedGroups.length }} of {{ matchedGroups.length }} — scroll for more
             </div>
           </div>
         </div>
@@ -236,7 +252,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from "vue";
 import { useModelViewerStore } from "../../../stores/modelViewerStore";
-import { VIEWER_SLOTS } from "../../../types/modelViewer";
+import { VIEWER_SLOTS, type ItemGroup } from "../../../types/modelViewer";
 import PaneLayout from "../../Shared/PaneLayout.vue";
 import GameIcon from "../../Shared/GameIcon.vue";
 import TurntableViewer from "./TurntableViewer.vue";
@@ -248,14 +264,66 @@ const search = ref("");
 // Many cosmetics (holiday hats, masks) have no 3D mesh in the game; hide them
 // by default so the list only shows items that actually render.
 const onlyWithModel = ref(true);
+// Gear tiers (Amazing/Astounding/Awesome …) share one appearance — collapse
+// items with an identical appearance string into a single "model" row.
+const groupModels = ref(true);
 const modeledCount = computed(() => store.items.filter((i) => i.has_model).length);
 
 const activeSlotLabel = computed(
   () => VIEWER_SLOTS.find((s) => s.id === store.activeSlot)?.label ?? store.activeSlot,
 );
 
-function isChosen(id: number): boolean {
-  return store.loadout[store.activeSlot]?.ref === String(id);
+// Prefer a real display name ("Bard Shirt") over internal-style placeholders
+// ("BardLeatherChest"): names with spaces win, then shorter names.
+function betterRep(a: { name: string }, b: { name: string }): boolean {
+  const aSpace = a.name.includes(" ");
+  const bSpace = b.name.includes(" ");
+  if (aSpace !== bSpace) return aSpace;
+  return a.name.length < b.name.length;
+}
+
+// All groups for the current slot: one entry per distinct appearance string
+// (or per item when grouping is off / an item has no key). The representative
+// is the friendliest, shortest name — usually the base tier ("Leather Shirt").
+const allGroups = computed<ItemGroup[]>(() => {
+  if (!groupModels.value) {
+    return store.items.map((i) => ({ rep: i, names: [i.name], ids: [i.id] }));
+  }
+  const byKey = new Map<string, ItemGroup>();
+  for (const i of store.items) {
+    const key = i.appearance_key ?? `#${i.id}`;
+    const g = byKey.get(key);
+    if (!g) {
+      byKey.set(key, { rep: i, names: [i.name], ids: [i.id] });
+    } else {
+      g.names.push(i.name);
+      g.ids.push(i.id);
+      if (betterRep(i, g.rep)) g.rep = i;
+    }
+  }
+  return [...byKey.values()].sort((a, b) => a.rep.name.localeCompare(b.rep.name));
+});
+
+const matchedGroups = computed<ItemGroup[]>(() => {
+  const q = search.value.trim().toLowerCase();
+  return allGroups.value.filter(
+    (g) =>
+      (!onlyWithModel.value || g.rep.has_model) &&
+      (!q || g.names.some((n) => n.toLowerCase().includes(q))),
+  );
+});
+
+function isGroupChosen(g: ItemGroup): boolean {
+  const chosen = store.loadout[store.activeSlot]?.ref;
+  return chosen != null && g.ids.some((id) => String(id) === chosen);
+}
+
+function groupTitle(g: ItemGroup): string {
+  const suffix = g.rep.has_model ? "" : " — no 3D model";
+  if (g.names.length === 1) return g.rep.name + suffix;
+  const shown = g.names.slice(0, 20);
+  const more = g.names.length > shown.length ? `\n… +${g.names.length - shown.length} more` : "";
+  return `${g.names.length} items share this model:${suffix}\n${shown.join("\n")}${more}`;
 }
 
 // Windowed list: render `visibleCount` rows and grow on scroll, so a large
@@ -264,18 +332,10 @@ const listEl = ref<HTMLElement | null>(null);
 const CHUNK = 200;
 const visibleCount = ref(CHUNK);
 
-const matchedItems = computed(() => {
-  const q = search.value.trim().toLowerCase();
-  return store.items.filter(
-    (i) =>
-      (!onlyWithModel.value || i.has_model) &&
-      (!q || i.name.toLowerCase().includes(q)),
-  );
-});
-const displayedItems = computed(() => matchedItems.value.slice(0, visibleCount.value));
+const displayedGroups = computed(() => matchedGroups.value.slice(0, visibleCount.value));
 
 // Reset the window when the underlying list, query, or filter changes.
-watch([search, () => store.items, onlyWithModel], () => {
+watch([search, () => store.items, onlyWithModel, groupModels], () => {
   visibleCount.value = CHUNK;
   if (listEl.value) listEl.value.scrollTop = 0;
 });
@@ -285,9 +345,9 @@ function onListScroll() {
   if (!el) return;
   if (
     el.scrollTop + el.clientHeight >= el.scrollHeight - 240 &&
-    visibleCount.value < matchedItems.value.length
+    visibleCount.value < matchedGroups.value.length
   ) {
-    visibleCount.value = Math.min(visibleCount.value + CHUNK, matchedItems.value.length);
+    visibleCount.value = Math.min(visibleCount.value + CHUNK, matchedGroups.value.length);
   }
 }
 

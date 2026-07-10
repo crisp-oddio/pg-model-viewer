@@ -440,6 +440,10 @@ pub struct BrowsableItem {
     /// True if this item's appearance resolves to a mesh present in the cache.
     /// Many cosmetics (holiday hats, masks, floating gems) have no game mesh.
     pub has_model: bool,
+    /// The raw appearance string (EquipAppearance2 preferred). Items sharing
+    /// this string render pixel-identically — the UI groups the list by it
+    /// (gear tiers like Amazing/Astounding/Awesome share one model).
+    pub appearance_key: Option<String>,
 }
 
 /// Does any mesh key of this item's appearance exist in the extracted catalog?
@@ -492,6 +496,10 @@ pub async fn list_appearance_items(
             icon_id: i.icon_id,
             equip_slot: i.equip_slot.clone(),
             has_model: cat.as_ref().map_or(true, |c| item_has_model(i, c)),
+            appearance_key: i
+                .equip_appearance2
+                .clone()
+                .or_else(|| i.equip_appearance.clone()),
         })
         .collect();
     out.sort_by(|a, b| a.name.cmp(&b.name));
