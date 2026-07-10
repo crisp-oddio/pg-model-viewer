@@ -18,3 +18,4 @@ src-tauri/binaries/
 *.log
 .DS_Store
 Thumbs.db
+dev-detached.log
