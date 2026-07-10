@@ -23,7 +23,12 @@ from __future__ import annotations
 import argparse, glob, hashlib, json, os, re, sys, time
 import numpy as np
 
-CATALOG_SCHEMA = 2
+CATALOG_SCHEMA = 3
+
+# Base-body face parts whose meshes carry extra submeshes (eyebrows/eyelashes)
+# that must NOT render with the primary material — sliced to submesh 0.
+# Covers all race prefixes (eq-x-, eq-i-, eq-r-, …) and sexes (m2/f2/x2).
+BASE_FACE_RE = re.compile(r"^eq-[a-z]-[a-z]2-(head|eyes)-\d+$")
 
 # ---- mesh source bundles ---------------------------------------------------
 GEAR_BUNDLE_GLOB = "*newmodel_assets_all*"      # modern m2/f2 player gear + base bodies + skeleton
@@ -72,11 +77,14 @@ def _parse_obj(obj_txt: str):
     return pos, nrm, uv, np.array(tris, dtype=np.uint32)
 
 
-def obj_to_glb(obj_txt, out_path: str) -> dict:
+def obj_to_glb(obj_txt, out_path: str, max_tris: int = None) -> dict:
     """Write one or more UnityPy OBJ meshes into a single geometry-only .glb.
 
     `obj_txt` may be a single OBJ string or a list of them (multi-part models
-    like a lute body + strings are merged into one geometry buffer)."""
+    like a lute body + strings are merged into one geometry buffer).
+    `max_tris` truncates to the first N triangles (submesh-0 slicing — used for
+    base-body face parts whose extra submeshes carry brows/lashes that would
+    otherwise render with the wrong material)."""
     from pygltflib import (GLTF2, Scene, Node, Mesh as GMesh, Primitive, Attributes,
                            Accessor, BufferView, Buffer, ARRAY_BUFFER,
                            ELEMENT_ARRAY_BUFFER, FLOAT, UNSIGNED_INT, SCALAR, VEC2, VEC3)
@@ -97,6 +105,8 @@ def obj_to_glb(obj_txt, out_path: str) -> dict:
     nrm = np.concatenate(nrm_all)
     uv = np.concatenate(uv_all)
     tris = np.concatenate(tri_all).astype(np.uint32)
+    if max_tris is not None:
+        tris = tris[: max_tris * 3]
 
     blob = b""
     def add(a: np.ndarray):
@@ -247,7 +257,7 @@ def sex_for_key(key: str):
 _SKIP_RENDERER_NAMES = ("sheath", "override", "mountpoint", "particle")
 
 
-def extract_gear(bundle_path, out, seen_tex, only_re, skip_textures):
+def extract_gear(bundle_path, out, seen_tex, only_re, skip_textures, force=False):
     import UnityPy
     log(f"[gear] loading {os.path.basename(bundle_path)} ...")
     env = UnityPy.load(bundle_path)
@@ -285,9 +295,19 @@ def extract_gear(bundle_path, out, seen_tex, only_re, skip_textures):
             continue
         glb_rel = f"meshes/{safe_name(name)}.glb"
         glb_abs = os.path.join(out, glb_rel.replace("/", os.sep))
-        if not os.path.exists(glb_abs):
+        if force or not os.path.exists(glb_abs):
+            # Face parts: keep only submesh 0 (skin/eyeballs) — the extra
+            # submeshes are brows/lashes meant for their own materials.
+            max_tris = None
+            if BASE_FACE_RE.match(name):
+                try:
+                    subs = mesh.m_SubMeshes
+                    if len(subs) > 1:
+                        max_tris = subs[0].indexCount // 3
+                except Exception:
+                    pass
             try:
-                stats = obj_to_glb(mesh.export(), glb_abs)
+                stats = obj_to_glb(mesh.export(), glb_abs, max_tris=max_tris)
             except Exception as e:
                 log(f"    ! mesh {name}: {e}"); continue
             if not stats:
@@ -547,6 +567,19 @@ def main():
     seen_tex: dict = {}
     t0 = time.time()
 
+    # A cache written by an older extractor schema must be refreshed: re-export
+    # newmodel meshes even when the glb already exists (fixes e.g. the
+    # face-submesh slicing introduced in schema 3).
+    force = False
+    try:
+        with open(os.path.join(args.out, "catalog.json"), encoding="utf-8") as f:
+            old_schema = json.load(f).get("schema")
+        if old_schema != CATALOG_SCHEMA:
+            force = True
+            log(f"[schema] cache is schema {old_schema}, current {CATALOG_SCHEMA} — re-exporting meshes")
+    except Exception:
+        pass
+
     gear_bundles = glob.glob(os.path.join(args.game_dir, GEAR_BUNDLE_GLOB))
     if not gear_bundles:
         log(f"FATAL: no gear bundle matching {GEAR_BUNDLE_GLOB} in {args.game_dir}")
@@ -554,7 +587,7 @@ def main():
     gear_bundle = gear_bundles[0]
     src_hash = hashlib.sha1(os.path.basename(gear_bundle).encode()).hexdigest()[:12]
 
-    appearances, materials = extract_gear(gear_bundle, args.out, seen_tex, only_re, args.skip_textures)
+    appearances, materials = extract_gear(gear_bundle, args.out, seen_tex, only_re, args.skip_textures, force=force)
     weapons = {}
     if not args.no_weapons:
         w, ind_app, ind_mats = extract_individual_bundles(

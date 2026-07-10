@@ -34,7 +34,13 @@
     </div>
 
     <div v-if="dyeableSlots.length === 0" class="text-xs text-text-muted">
-      {{ notDyeable ? "This item is not dyeable." : "No dye channels." }}
+      {{
+        store.viewMode === "character"
+          ? "No dyeable pieces equipped."
+          : notDyeable
+            ? "This item is not dyeable."
+            : "No dye channels."
+      }}
     </div>
   </div>
 </template>
@@ -50,9 +56,16 @@ const emit = defineEmits<{
   (e: "dye", slot: string, channel: number, hex: string): void;
 }>();
 
-const dyeableSlots = computed<ResolvedSlot[]>(() =>
-  (store.resolved?.slots ?? []).filter((s) => s.dyeable && s.dye_channels > 0),
-);
+// Item mode: the active item's dye channels. Character mode: every dyeable
+// piece across the whole equipped loadout, so the outfit is dyeable in one
+// place without re-selecting each slot.
+const dyeableSlots = computed<ResolvedSlot[]>(() => {
+  const source =
+    store.viewMode === "character"
+      ? Object.values(store.resolvedLoadout).flatMap((a) => a.slots)
+      : (store.resolved?.slots ?? []);
+  return source.filter((s) => s.dyeable && s.dye_channels > 0);
+});
 
 const notDyeable = computed(
   () => store.resolved?.not_dyeable_keyword ?? false,

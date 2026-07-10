@@ -18,6 +18,9 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 /// Steam application id for Project: Gorgon.
 const PG_STEAM_APPID: &str = "342940";
+/// Catalog schema this app expects (must match extract.py's CATALOG_SCHEMA).
+/// An older cache reports `cache_ready=false` so the UI prompts a re-extract.
+const EXPECTED_CATALOG_SCHEMA: u64 = 3;
 /// Relative path from a game install root to the addressable bundle dir.
 const BUNDLE_SUBPATH: &str =
     "WindowsPlayer_Data/StreamingAssets/aa/StandaloneWindows64";
@@ -158,8 +161,12 @@ pub async fn model_viewer_status(
         match load_catalog(&app) {
             Ok(cat) => {
                 let count = |k: &str| cat.get(k).and_then(|v| v.as_object()).map_or(0, |o| o.len());
+                // An older-schema cache has stale meshes — treat as not ready
+                // so the UI offers re-extraction (the extractor force-refreshes).
+                let schema_ok = cat.get("schema").and_then(|v| v.as_u64())
+                    == Some(EXPECTED_CATALOG_SCHEMA);
                 (
-                    true,
+                    schema_ok,
                     count("appearances"),
                     count("materials"),
                     count("weapons"),
@@ -372,19 +379,19 @@ fn base_body_directives(
         v.push("x-m2-eyes-1".to_string());
         v
     };
-    let teeth = || vec!["x-x2-teeth-1".to_string(), format!("x-{sex}2-teeth-1")];
-
     // (mesh suffix, slot name, skin-material candidates). Slot names Chest/Legs/
     // Hands/Feet match the equipment slots so the viewer can hide a base part
-    // when armor covers it; Head/Eyes/Teeth are always shown (the face).
-    let spec: [(&str, &str, Vec<String>); 7] = [
+    // when armor covers it; Head/Eyes are always shown (the face). Teeth are
+    // deliberately excluded: the mesh is authored at the origin (not in
+    // character space) so it would render on the floor — and a closed mouth
+    // hides them anyway.
+    let spec: [(&str, &str, Vec<String>); 6] = [
         ("chest-0", "Chest", skin("body")),
         ("legs-0", "Legs", skin("body")),
         ("hands-0", "Hands", skin("hands")),
         ("feet-0", "Feet", skin("feet")),
         ("head-0", "Head", skin("face")),
         ("eyes-0", "Eyes", eyes()),
-        ("teeth-0", "Teeth", teeth()),
     ];
 
     spec.into_iter()
@@ -610,7 +617,8 @@ mod tests {
         let m = mats(&["f-m2-skin-body-1", "f-m2-skin-hands-1"]);
         let d = base_body_directives('m', Some(&m));
         let slots: Vec<&str> = d.iter().map(|x| x.slot.as_str()).collect();
-        assert_eq!(slots, ["Chest", "Legs", "Hands", "Feet", "Head", "Eyes", "Teeth"]);
+        // No Teeth: that mesh is origin-authored and would render on the floor.
+        assert_eq!(slots, ["Chest", "Legs", "Hands", "Feet", "Head", "Eyes"]);
         // Meshes are the sex-specific naked base parts.
         assert_eq!(
             d[0].mesh_key.as_deref(),
@@ -636,14 +644,12 @@ mod tests {
     }
 
     #[test]
-    fn eyes_fall_back_across_sexes_and_teeth_shared() {
+    fn eyes_fall_back_across_sexes() {
         // Only an `x-m2-eyes-1` exists — eyes candidates must still find it for male.
-        let m = mats(&["x-m2-eyes-1", "x-x2-teeth-1"]);
+        let m = mats(&["x-m2-eyes-1"]);
         let d = base_body_directives('m', Some(&m));
         let eyes = d.iter().find(|x| x.slot == "Eyes").unwrap();
         assert_eq!(eyes.material_key.as_deref(), Some("x-m2-eyes-1"));
-        let teeth = d.iter().find(|x| x.slot == "Teeth").unwrap();
-        assert_eq!(teeth.material_key.as_deref(), Some("x-x2-teeth-1"));
     }
 
     #[test]
