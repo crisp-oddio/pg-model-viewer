@@ -112,8 +112,11 @@ def obj_to_glb(obj_txt, out_path: str, max_tris: int = None, bake=None) -> dict:
         tris = tris[: max_tris * 3]
     if bake is not None:
         m, off = bake
-        pos = pos @ m.T + off
-        nrm = nrm @ m.T  # rotation-only, no rescale needed
+        # Keep float32: the accessors declare FLOAT, and a float64 matrix
+        # would silently promote the arrays (writing 8-byte floats into a
+        # buffer read as 4-byte → garbage geometry).
+        pos = (pos @ m.T + off).astype(np.float32)
+        nrm = (nrm @ m.T).astype(np.float32)  # rotation-only, no rescale needed
 
     blob = b""
     def add(a: np.ndarray):
