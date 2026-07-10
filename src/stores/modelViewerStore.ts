@@ -88,11 +88,10 @@ export const useModelViewerStore = defineStore("modelViewer", () => {
         unlistenProgress = await listen<ExtractionProgress>(
           "model-extraction-progress",
           (e) => {
+            // Progress display only — the post-extraction refresh runs in
+            // runExtraction when the command resolves (more reliable than
+            // depending on the final event arriving).
             extractionMessage.value = e.payload.message;
-            if (e.payload.done) {
-              extracting.value = false;
-              if (e.payload.ok) refreshStatus().then(fetchBaseBody);
-            }
           },
         );
       }
@@ -116,9 +115,16 @@ export const useModelViewerStore = defineStore("modelViewer", () => {
     extractionMessage.value = "Starting extraction…";
     error.value = null;
     try {
+      // Resolves only after the extractor finishes writing the cache.
       await invoke<string>("start_model_extraction", { gameDir: null });
+      // Full post-cache init: without this the viewer appeared but the item
+      // list and base body stayed empty until the app was relaunched.
+      await refreshStatus();
+      await fetchBaseBody();
+      await selectSlot(activeSlot.value);
     } catch (e) {
       error.value = String(e);
+    } finally {
       extracting.value = false;
     }
   }
